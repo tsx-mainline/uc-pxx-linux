@@ -1,128 +1,233 @@
-# LEDs, switches and the ESPHome plugin
+# LEDs
 
-The board adds entities to the ESPHome device of the panel with the plugin
-`/usr/local/share/tsx/esphome.d/uc-pxx.py`. The plugin interface is in
-`docs/esphome.md` of tsx-linux-common. This page tells which entities the
-plugin adds and which rules the LEDs follow.
+The UC-P10 has seven LEDs. They are status indicators, not key backlights.
+The package `uc-pxx-leds` owns all of them. The daemon `uc-pxx-leds` is the
+only program that writes them. `tsx-buttons` does not touch them.
 
-## Entities
+| LED class device | What it is | Name in this package |
+|---|---|---|
+| `teams_white` | Indicator of the Teams key | `teams` |
+| `mute_headset` | Indicator of the Headset key | `headset` |
+| `mute_speaker` | Indicator of the Speaker key | `speaker` |
+| `mute_red` | Indicator of the Mic key (the mic mute LED) | `mic` |
+| `red`, `green`, `blue` | The RGB status LED, centre bottom | `status` |
 
-The object ids are fixed. Home Assistant keeps the settings of an entity by its
-key, and the key comes from the object id. Do not change an object id.
+All seven are on/off LEDs (`max_brightness` 1). The status LED makes its seven
+colors by mixing the three LEDs. Do not confuse `mute_red` (the Mic indicator)
+with `red` (the red part of the status LED).
 
-| Entity | Object id | Type | Source |
-|---|---|---|---|
-| Teams LED | `teams_led` | light, on/off | LED `teams_white`, key LED 1 |
-| Headset LED | `headset_led` | light, on/off | LED `mute_headset`, key LED 2 |
-| Speaker LED | `speaker_led` | light, on/off | LED `mute_speaker`, key LED 3 |
-| Mic mute LED | `mic_mute_led` | light, on/off | LED `mute_red`, key LED 4 |
-| Key LEDs release | `key_leds_release` | button | Gives the four LEDs back to tsx-buttons |
-| Status LED | `status_led` | light, RGB | LEDs `red`, `green` and `blue` |
-| Status LED control | `status_led_control` | text sensor, diagnostic | Who owns the status LED now |
-| Handset off-hook | `handset_off_hook` | binary sensor | `SW_DOCK` of `gpio-keys` |
-| Camera privacy | `camera_privacy` | binary sensor | `SW_CAMERA_LENS_COVER` of `gpio-keys` |
+## Package
 
-An entity exists only when its part exists. A panel without the LED class
-devices of the key LEDs has no key LED lights. A panel without the switch bit
-has no sensor for it. Common adds the light "Key LEDs" itself.
+The source is in `packages/uc-pxx-leds/`. The package is self-contained. It
+will become the aports package `uc-pxx-leds`. The list `FILES` has every file
+with its mode. The tree `root/` has the install paths.
 
-## Who writes the LEDs
-
-The plugin runs as user kiosk when `VOICE` is on. That user cannot write an LED
-or talk to tsx-buttons. So the plugin writes one command per line to the FIFO
-`/run/tsx/uc-pxx-leds` (group kiosk). The root service `uc-pxx-leds` reads the
-FIFO. It runs only these fixed commands and refuses everything else:
-
-| Command | Effect |
+| Installed file | Use |
 |---|---|
-| `key N on\|off\|auto` | Runs `tsx-keypad key N STATE`. N is 1 to 4 |
-| `keys auto` | The same with `auto` for all four key LEDs |
-| `status R G B` | The status LED. R, G and B are 0 or 1 |
+| `/usr/local/sbin/uc-pxx-leds` | The daemon (Python, root, OpenRC) |
+| `/etc/init.d/uc-pxx-leds` | The OpenRC service (default runlevel, before `uc-pxx-boot-ok`) |
+| `/usr/local/bin/uc-pxx-led` | The command line tool |
+| `/etc/tsx/uc-pxx-leds.conf` | The settings (`PERSIST`) |
+| `/usr/local/share/tsx/esphome.d/uc-pxx-leds.py` | The ESPHome plugin |
 
-The plugin reads the state of the LEDs from `/sys/class/leds`. It never writes
-them.
+The package needs `python3`, `openrc` and `uc-pxx-boot-tools` (the program
+`uc-pxx-bootctl`). The old service `uc-pxx-status-led` is gone. The daemon does
+its work.
 
-## Key LEDs: the rule
+## States
 
-Two controls act on the four key LEDs:
+An indicator has one of these states. All indicators are off after a boot.
 
-1. The light "Key LEDs" of tsx-buttons sets one level for all LEDs. The LEDs
-   are on/off LEDs (`LED_MODE=onoff`), so a level above 0 turns every LED on.
-2. The four lights of this plugin set an override for one LED. It is the
-   override of `tsx-keypad key N on|off|auto`.
+| State | Meaning |
+|---|---|
+| `off` | Dark |
+| `on` | Lit |
+| `blink slow` | 1 Hz (500 ms on, 500 ms off) |
+| `blink fast` | 4 Hz (125 ms on, 125 ms off) |
 
-The rules:
+The status LED has a color and a mode.
 
-- tsx-buttons applies the level and the overrides together. It writes the LEDs
-  again every 5 seconds. So a program that writes an LED in `/sys` directly
-  loses the value within 5 seconds. That is why the plugin never writes an LED
-  itself.
-- A light turned off sets the override `off`. The LED stays dark, whatever the
-  level of "Key LEDs" is.
-- A light turned on sets the override `on`. The LED follows the level of "Key
-  LEDs". It is lit while the level is above 0.
-- The button "Key LEDs release" sets `auto` for all four LEDs. tsx-buttons then
-  owns them again.
-- An override stays until the button, `tsx-keypad key N auto` or a restart of
-  tsx-buttons. A reboot clears it.
-- Each light shows the LED as it is, not the last command. After a command, the
-  light keeps the asked state for 2 seconds. Then it shows the LED again. So a
-  command that has no effect turns back.
+| Color | LEDs on |
+|---|---|
+| `off` | none |
+| `red`, `green`, `blue` | that LED |
+| `yellow` | red and green |
+| `cyan` | green and blue |
+| `magenta` | red and blue |
+| `white` | all three |
 
-Limit of tsx-buttons today: the override `on` does not force the LED on. With
-the level of "Key LEDs" at 0, a light turned on turns back to off after
-2 seconds. A status indicator that must light while "Key LEDs" is off needs a
-change in tsx-linux-common: the override `on` must light the LED at level 0
-too (`on = key_override[i] == 1 || (lvl > 0 && key_override[i] != 0 && ...)` in
-`leds_apply`). The plugin does not change when this lands.
+| Mode | Meaning |
+|---|---|
+| `solid` | The color stays on |
+| `blink` (`slow` or `fast`) | The color blinks |
+| `heartbeat` | Two short pulses, then a pause |
 
-## Status LED: the hand-over
+The daemon uses the kernel triggers `timer` and `heartbeat` where it can. A
+color with a red part is different. The daemon never puts a trigger on the
+`red` LED (see "Red LED safety latch"). It makes the pattern itself with plain
+writes. The same is true for an LED that has no such trigger.
 
-The status LED has three on/off LEDs: seven colors and off. The service
-`uc-pxx-status-led` shows the boot state on it (blue heartbeat, then green).
-Home Assistant takes it over with these rules:
+## Boot state
 
-1. Until the boot is marked good, the boot service owns the LED. The service
-   writes `boot wait` or `boot ok` to `/run/tsx/status-led.state`. A command
-   from Home Assistant is refused until the file says `boot ok`.
-2. After that, Home Assistant owns the LED. Turning the light off turns every
-   LED off, also the green of the boot. The next boot shows the boot state
-   again.
-3. The marker `/run/uc-pxx-slot-a-changed` takes the LED away again. The A/B
-   scripts create it before they arm or change slot A. While it exists,
-   `uc-pxx-leds` refuses status commands.
+At the start the status LED shows the boot state:
 
-Why not "always, with the boot service yielding": the blue heartbeat is the
-only sign that the boot is not yet marked good. Home Assistant must not hide
-it.
+| Boot state | Status LED | Meaning |
+|---|---|---|
+| `wait` | Blue, heartbeat | Slot A is not marked successful |
+| `ok` | Green, solid | Slot A is marked successful |
+| `locked` | Blue, heartbeat | A script changed or armed slot A in this boot |
 
-### The red LED
+The daemon reads the state with `uc-pxx-bootctl status`. This command only
+reads the A/B sector. The daemon asks every 10 seconds while the state is not
+`ok`, and every 60 seconds after that. Slot A is successful when the line
+`current: A{... succ 1}` shows it. A failed read or a missing line is `wait`.
+
+The state is `locked` while the marker `/run/uc-pxx-slot-a-changed` exists.
+`uc-pxx-arm-slot` creates the marker before it arms slot A. The running image
+then has not been proven good. The state goes back to `ok` when the marker is
+gone and `uc-pxx-bootctl` says that slot A is successful.
+
+Until the state is `ok`, the daemon refuses every `status` command, except
+`status auto`. The indicators work in every state. After the state is `ok`, a
+`status` command changes the status LED. `status auto` goes back to the boot
+display (green when `ok`).
+
+## Red LED safety latch
 
 The A/B scripts write `/sys/class/leds/red/brightness` when the A/B state is
-unknown. Home Assistant must not hide that. `uc-pxx-leds` follows these rules:
+unknown ([boot-control.md](boot-control.md)). Nothing may hide that. The daemon
+follows these rules:
 
-- Red that is on at the start, or on and not switched on by `uc-pxx-leds`, is
-  latched. The helper never writes a latched red LED. A status command changes
-  only green and blue.
-- The latch ends only when the red LED reads 0 again. Then a person cleared it.
-- The helper writes the red LED only when it reads the value that the helper
-  wrote last.
-- The light then shows the red LED as lit. Home Assistant sees that its color
-  did not take effect. The text sensor "Status LED control" adds "red LED
-  latched".
+- The red LED is latched when it is on at the start of the daemon. It is also
+  latched when it is on and the daemon did not switch it on.
+- The daemon never writes a latched red LED. A status command changes only the
+  green and blue parts.
+- The latch ends only when the red LED reads 0 again. A person cleared it.
+- The daemon writes red only after it read the value that it wrote last. It
+  never turns off a red that it did not turn on.
+- While the state is `wait` or `locked`, the daemon does not write red at all.
+  A red that the user asked for stays as it is. This closes the race with a
+  script that lights red just after it creates the marker.
+- The daemon never puts a kernel trigger on `red`. A write to `brightness` of
+  an LED with the `timer` trigger would be invisible. With plain writes, every
+  change by another program shows.
 
-Limit: if Home Assistant lit red itself and a script then lights red, the
-change is not visible. Every script that lights red after a change of slot A
-creates the marker first, so the status LED is locked then. The hook of
-`uc-pxx-mark-boot` lights red only when the boot is not marked good, so the
-LED is not under Home Assistant then either.
+The state file has the line `red free` or `red latched`. The status LED then
+shows red as lit, whatever color was asked.
 
-The text sensor "Status LED control" shows `Home Assistant`, `Boot (...)`,
-`Locked (...)` or `Unavailable`.
+## Control
+
+The daemon listens on the unix socket `/run/tsx/uc-pxx-leds.sock`. The owner is
+root, the group is `kiosk` and the mode is 0660. So the ESPHome plugin, which
+runs as user `kiosk`, can use it. A client sends one line and reads one answer
+line. The answer is `ok` or `err REASON`. The daemon closes the connection. It
+waits at most 2 seconds for a line.
+
+The daemon accepts only these lines and refuses all others:
+
+| Line | Effect |
+|---|---|
+| `ind NAME on` or `off` | NAME is `teams`, `headset`, `speaker` or `mic` |
+| `ind NAME blink [slow\|fast]` | Blink. The default is slow |
+| `status auto` | The boot display, then green |
+| `status off` | All three LEDs off |
+| `status COLOR [solid\|heartbeat]` | A color |
+| `status COLOR blink [slow\|fast]` | A blinking color |
+| `get` | The text of the state file |
+
+A line has at most 64 printable ASCII characters. The daemon writes the state
+file before it answers. So a client that reads the file after the answer sees
+the new state.
+
+### The command line
+
+```
+uc-pxx-led <teams|headset|speaker|mic> <on|off|blink> [slow|fast]
+uc-pxx-led status auto
+uc-pxx-led status off
+uc-pxx-led status <colour> [solid|heartbeat]
+uc-pxx-led status <colour> blink [slow|fast]
+uc-pxx-led show
+```
+
+`show` prints the boot state, the four indicators, the status LED (shown and
+asked), the red latch and the persistence setting. Without a daemon, it prints
+the last state file. The exit status is 0 for done, 1 when the daemon refused
+the command, 2 for wrong use and 3 when the daemon does not answer.
+
+### The state file
+
+The daemon writes `/run/tsx/uc-pxx-leds.state` (mode 0644) in one step. Other
+programs read it. Each line is a key and its words:
+
+| Line | Values |
+|---|---|
+| `boot` | `ok`, `wait` or `locked` |
+| `red` | `free` or `latched` |
+| `teams`, `headset`, `speaker`, `mic` | `off`, `on` or `blink slow\|fast` |
+| `status` | `auto`, or the asked color, mode and speed |
+| `shown` | The color and mode that the status LED shows now. A latched red LED is in the color |
+| `persist` | `yes` or `no` |
+
+### Persistence
+
+`PERSIST=yes` in `/etc/tsx/uc-pxx-leds.conf` keeps the state over a reboot.
+The default is `no`. The daemon then saves the commands in
+`/data/uc-pxx-leds.saved` after each change, and plays them back at the next
+start. A saved `status` command takes effect only after the boot is good. The
+saved file is plain text with the same lines as the commands. A line that does
+not parse is skipped. `rc-service uc-pxx-leds reload` reads the setting again.
+
+## ESPHome plugin
+
+The plugin `/usr/local/share/tsx/esphome.d/uc-pxx-leds.py` follows the plugin
+interface of tsx-linux-common (`docs/esphome.md`). Home Assistant keeps the
+settings of an entity by its key, and the key comes from the object id. The
+object ids did not change when the LEDs moved to this package.
+
+| Entity | Object id | Type | Daemon |
+|---|---|---|---|
+| Teams LED | `teams_led` | light, on/off | `ind teams` |
+| Headset LED | `headset_led` | light, on/off | `ind headset` |
+| Speaker LED | `speaker_led` | light, on/off | `ind speaker` |
+| Mic mute LED | `mic_mute_led` | light, on/off | `ind mic` |
+| Status LED | `status_led` | light, RGB, with effects | `status` |
+| Status LED control | `status_led_control` | text sensor, diagnostic | The `boot` and `red` lines |
+
+The button `key_leds_release` is gone. It gave the key LEDs back to
+`tsx-buttons`, and `tsx-buttons` has no LEDs on this board now.
+
+- The plugin reads the state file and sends the commands to the socket. It
+  never writes an LED. A blinking indicator shows as on.
+- The class `LEDLightEntity` of linux-voice-assistant lists its entity as a
+  configuration entity. The plugin sets the entity category to none in the
+  entity list. So Home Assistant shows the lights as normal controls.
+- The Status LED light has 7 colors. A color that Home Assistant sends is
+  rounded: a channel is on when it is at least half of the brightest channel.
+  A turn on with black gives white.
+- The effects of the Status LED are `Solid`, `Blink`, `Fast blink` and
+  `Heartbeat`. The light turned off sends `status off`.
+- Until the boot is good, the daemon refuses the status commands. The light
+  then shows the real state again at the next poll (blue heartbeat).
+- The text sensor says `Free`, `Boot (...)`, `Locked (...)` or `Unavailable`,
+  with `, red LED latched` added when it applies.
+- A command waits for the answer of the daemon for at most half a second.
+- A panel without the LED class devices of a light has no entity for it.
+- The ESPHome device needs a reconnect in Home Assistant to list entities that
+  are new. The entities in this table were there before.
+
+## Later: the Mic key and the mute LED
+
+The Mic key (`KEY_MUTE`) fires a Home Assistant event and does nothing else.
+The Mic indicator does not follow the mute state of the microphone. A local
+rule in `tsx-buttons` or in a small service can add this: a press of the key
+toggles the mute and runs `uc-pxx-led mic on` or `uc-pxx-led mic off`. The
+interface above is enough for that. The rule is not part of this package yet.
 
 ## Switches
 
-The sensors use the ioctl `EVIOCGSW` on the input device `gpio-keys`, twice per
+The board plugin `/usr/local/share/tsx/esphome.d/uc-pxx.py` adds two binary
+sensors. The sensors use the ioctl `EVIOCGSW` on the input device `gpio-keys`, twice per
 second at most. They do not wait for events, because `tsx-idled` grabs the
 input devices while the screen is blank. The same device is read by
 `uc-pxx-presence` for the PIR.
@@ -157,6 +262,9 @@ sensor, for example a key `DISTANCE=no` in `hw.conf`.
 
 | Test | Checks |
 |---|---|
-| `rootfs/tests/test-esphome-plugin.sh` | The plugin against `tsx_panel` of tsx-linux-common with fake LEDs, a fake input device and a FIFO. Needs `TSX_COMMON` |
-| `rootfs/tests/test-leds.sh` | `uc-pxx-leds`: the commands, the gate, the red latch and the FIFO |
-| `rootfs/tests/test-status-led.sh` | The state file of `uc-pxx-status-led` |
+| `packages/uc-pxx-leds/tests/test-package.sh` | `FILES` and the tree are the same. No other file writes the LEDs |
+| `packages/uc-pxx-leds/tests/test-daemon.sh` | The daemon with fake LEDs and a stub of `uc-pxx-bootctl`: the commands, the boot state, the colors, the triggers, the red latch, persistence and the socket |
+| `packages/uc-pxx-leds/tests/test-cli.sh` | `uc-pxx-led` against the real daemon: commands, exit status, `show` |
+| `packages/uc-pxx-leds/tests/test-plugin.sh` | The plugin against `tsx_panel` of tsx-linux-common with stand-ins and a fake daemon. Needs `TSX_COMMON` |
+| `rootfs/tests/test-esphome-plugin.sh` | The board plugin `uc-pxx.py` (the switches). Needs `TSX_COMMON` |
+| `rootfs/tests/test-board.sh` | `buttons-board.conf` has the six keys and no LED setting |

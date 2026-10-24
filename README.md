@@ -31,7 +31,8 @@ what is open.
 | Services `uc-pxx-audio`, `uc-pxx-watchdog` | Ported. Not tested on a unit from this repository |
 | Services `uc-pxx-firmware`, `uc-pxx-switch`, `uc-pxx-als` | Stubs with TODO markers |
 | A/B boot control, flash wrapper and arm helper | Renamed from the reviewed bring-up tools. Needs a review of the exact files, see [boot-control.md](docs/boot-control.md) |
-| ESPHome plugin, LED helper `uc-pxx-leds` | Written. Tested with fake LEDs and a real `EVIOCGSW`, see [leds.md](docs/leds.md). Not run on a unit |
+| LED package `uc-pxx-leds` (daemon, command, ESPHome plugin) | Written. Tested with fake LEDs, see [leds.md](docs/leds.md). Not run on a unit |
+| ESPHome board plugin (switches) | Written. Tested with a real `EVIOCGSW`. Not run on a unit |
 | Initramfs and rescue | Open |
 | Installer | Open, see [install.md](docs/install.md) |
 
@@ -55,6 +56,7 @@ bootloader/          the shim source (the boot image kernel stub)
 ci/                  lint and repository checks
 docs/                family, boot chain, hardware, kernel, rootfs, boot control, install
 kernel/              kernel revision pin, kernel build, boot image assembly
+packages/            self-contained packages (uc-pxx-leds)
 rootfs/              root file system builder, profiles, board overlay, tests
 tools/               helpers for the board (switch init)
 .github/workflows/   CI workflows (this repository is local only for now)

@@ -56,6 +56,7 @@ pkg htop
 pkg procps-ng
 pkg tsx-keys
 pkg uc-pxx-kernel-lts
+pkg uc-pxx-leds
 
 # --- services
 # The boot runlevel finishes before the default runlevel starts. So the switch
@@ -75,7 +76,6 @@ svc default tsx-idled
 svc default tsx-buttons
 svc default tsx-panelctl
 svc default tsx-autoupdate
-svc default uc-pxx-status-led
 svc default uc-pxx-leds
 svc default uc-pxx-boot-ok
 svc default networking

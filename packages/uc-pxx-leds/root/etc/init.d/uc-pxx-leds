@@ -1,0 +1,25 @@
+#!/sbin/openrc-run
+# The only writer of the seven LEDs of the UC-P10 (uc-pxx-leds). It shows the
+# boot state on the RGB status LED, takes commands on /run/tsx/uc-pxx-leds.sock
+# and writes /run/tsx/uc-pxx-leds.state. It starts before uc-pxx-boot-ok so
+# that the blue heartbeat shows from the start.
+description="LEDs of the UC-P10: indicators, status LED, boot state"
+supervisor=supervise-daemon
+command=/usr/local/sbin/uc-pxx-leds
+respawn_delay=5
+respawn_max=0
+output_log=/var/log/uc-pxx-leds.log
+error_log=/var/log/uc-pxx-leds.log
+depend() {
+	need localmount
+	after udev-settle
+	before uc-pxx-boot-ok tsx-esphome tsx-voice
+}
+start_pre() {
+	checkpath -d -m 0755 /run/tsx
+}
+reload() {
+	ebegin "Reloading ${RC_SVCNAME}"
+	supervise-daemon "${RC_SVCNAME}" --signal HUP
+	eend $?
+}

@@ -1,0 +1,21 @@
+# The files of the package uc-pxx-leds (later an aports package of the category
+# uc-pxx). The source tree is root/: each path below is the install path in the
+# image, with the mode of the file. tests/test-package.sh checks that this list
+# and the tree are the same.
+#
+# Depends (apk): python3, openrc, uc-pxx-boot-tools (the program
+# /usr/sbin/uc-pxx-bootctl, run with the argument "status" only).
+# Optional: tsx-esphome or tsx-voice from tsx-linux-common (they load the
+# plugin from /usr/local/share/tsx/esphome.d).
+# Conflicts: no other program may write the LED class devices teams_white,
+# mute_headset, mute_speaker, mute_red, green and blue. The boot-control scripts
+# of uc-pxx-board may write red, as an alarm (docs/leds.md). tsx-buttons has no
+# LEDs on this board (buttons-board.conf of uc-pxx-board).
+# The config file is a conffile: an upgrade keeps the file of the user.
+#
+# mode  path
+0755 usr/local/sbin/uc-pxx-leds
+0755 usr/local/bin/uc-pxx-led
+0755 etc/init.d/uc-pxx-leds
+0644 etc/tsx/uc-pxx-leds.conf
+0644 usr/local/share/tsx/esphome.d/uc-pxx-leds.py

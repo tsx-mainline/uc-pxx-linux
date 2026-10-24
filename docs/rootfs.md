@@ -54,6 +54,7 @@ lists only these two repositories.
 | Package | Content |
 |---|---|
 | `uc-pxx-board` | The board files of this repository (`rootfs/overlay`) and `rtl8363-init` |
+| `uc-pxx-leds` | The LED package (`packages/uc-pxx-leds`): daemon, command, service and ESPHome plugin |
 | `uc-pxx-kernel-lts` | The boot image `/boot/uc-pxx-lts.img` and the module tree |
 | `uc-pxx-boot-tools` | The boot-control tools ([boot-control.md](boot-control.md)) |
 | `uc-pxx-console`, `uc-pxx-kiosk`, `uc-pxx-ha` | The profile meta packages |
@@ -180,36 +181,9 @@ All services of this family start with `uc-pxx-`.
 | `uc-pxx-switch` | boot | Sets the MAC address and starts the Ethernet switch. Not tested in this form |
 | `uc-pxx-audio` | default | Done. Mixer defaults and volume |
 | `uc-pxx-boot-ok` | default | Starts the boot-marking hook. See [boot-control.md](boot-control.md) |
-| `uc-pxx-status-led` | default | Done. Blue heartbeat on the status LED until slot A is marked good, then solid green. See "Status LED" |
 | `uc-pxx-presence` | default | Done. Reads the PIR switch and writes the presence state. See "Presence" |
 | `uc-pxx-als` | default | Done. Reads the light sensor and feeds the automatic brightness. See "Ambient light" |
-| `uc-pxx-leds` | default | Root helper for the ESPHome plugin: key LED overrides and the status LED. See [leds.md](leds.md) |
-
-### Status LED
-
-`uc-pxx-status-led` shows the boot state on the RGB status LED. It uses the
-LED class devices `green` and `blue` of `/sys/class/leds`.
-
-| State of slot A | Status LED |
-|---|---|
-| Not marked successful (the boot is new or an update armed it) | Blue, trigger `heartbeat` |
-| Marked successful | Green on, blue off |
-
-The program reads the state with `uc-pxx-bootctl status` every 10 seconds. The
-command only reads the A/B sector. It writes one line to the kernel log each
-time. The program stops when slot A is successful, or after 10 minutes. If
-slot A is still not successful then, blue keeps the heartbeat.
-
-The program never writes the `red` LED. `uc-pxx-arm-slot` and the
-boot-marking hook light red when the A/B state is unknown
-([boot-control.md](boot-control.md)). Nothing in the program clears it.
-
-The program also writes `/run/tsx/status-led.state` with `boot wait` or
-`boot ok`. Home Assistant may take the status LED only after `boot ok`
-([leds.md](leds.md)).
-
-After `uc-pxx-arm-slot` armed slot A in a running system, the LED stays as it
-is until the next boot. The next boot starts the program again.
+| `uc-pxx-leds` | default | The LED daemon, from the package `uc-pxx-leds`. It owns the four indicators and the RGB status LED, and shows the boot state. See [leds.md](leds.md) |
 
 ### Ambient light
 
@@ -332,8 +306,9 @@ settings are in `/etc/conf.d/uc-pxx-watchdog`.
 `/etc/tsx/buttons-board.conf` lists the six touch keys in their physical
 order: `teams`, `headset`, `speaker`, `volume_down`, `volume_up` and `mic`
 ([hardware.md](hardware.md) has the table). The layout is verified with
-evtest. The four key LEDs are on/off LEDs: the file sets `LED_MODE=onoff`, and
-the keys Teams, Headset, Speaker and Mic use `led=1` to `led=4`.
+evtest. The file has no LED setting. The LEDs next to the keys are status
+indicators, and the package `uc-pxx-leds` owns them ([leds.md](leds.md)).
+`tsx-buttons` reports `leds no` on this board.
 
 ## Tests
 
@@ -342,15 +317,14 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 | Test | Checks |
 |---|---|
 | `rootfs/tests/test-profiles.sh` | The package, service and image file lists of the profiles |
-| `rootfs/tests/test-board.sh` | The board values, the board hook, the MAC address, the model, the key codes and the key LEDs |
+| `rootfs/tests/test-board.sh` | The board values, the board hook, the MAC address, the model, the key codes and the absence of LED settings |
 | `rootfs/tests/test-hw.sh` | `tsx-hw` with a made-up `/sys`: the facts and the layers of `panel-board.d` |
 | `rootfs/tests/test-als.sh` | `uc-pxx-als` and `tsx-als` with a made-up IIO device: counts to lux, the files, the backlight range, a reload |
 | `rootfs/tests/test-presence.sh` | `uc-pxx-presence` with a made-up input device: the find of the switch, the states, the wake call, a reload |
 | `rootfs/tests/test-audio.sh` | `uc-pxx-audio` with a stub `amixer` |
 | `rootfs/tests/test-firmware.sh` | `uc-pxx-firmware` with a made-up vendor folder |
-| `rootfs/tests/test-status-led.sh` | `uc-pxx-status-led` with fake LEDs and a stub for `uc-pxx-bootctl` |
-| `rootfs/tests/test-leds.sh` | `uc-pxx-leds`: the commands, the gate, the red latch, the FIFO |
-| `rootfs/tests/test-esphome-plugin.sh` | The ESPHome plugin against `tsx_panel` of tsx-linux-common (see [leds.md](leds.md)) |
+| `rootfs/tests/test-esphome-plugin.sh` | The board plugin `uc-pxx.py` (the switches) against `tsx_panel` of tsx-linux-common |
+| `packages/uc-pxx-leds/tests/test-*.sh` | The LED package: the file list, the daemon, the command and the ESPHome plugin (see [leds.md](leds.md)) |
 | `rootfs/tests/test-switch.sh` | `uc-pxx-switch` with stub tools |
 | `rootfs/tests/test-watchdog.sh` | The timeout checks of `uc-pxx-watchdog` |
 | `rootfs/tests/test-kernel-pins.sh` | `rootfs/check-kernel-pins.sh` |

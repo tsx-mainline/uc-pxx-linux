@@ -59,10 +59,12 @@ jobs:
         run: sh rootfs/tests/test-switch.sh
       - name: rootfs/tests/test-watchdog.sh - watchdog service timeout and interval checks
         run: sh rootfs/tests/test-watchdog.sh
-      - name: rootfs/tests/test-status-led.sh - the status LED service with fake LEDs and a stub boot-control tool
-        run: sh rootfs/tests/test-status-led.sh
-      - name: rootfs/tests/test-leds.sh - the root helper of the key LEDs and the status LED, with fake LEDs and a FIFO
-        run: sh rootfs/tests/test-leds.sh
+      - name: packages/uc-pxx-leds/tests/test-package.sh - the file list of the LED package and the rule of one writer
+        run: sh packages/uc-pxx-leds/tests/test-package.sh
+      - name: packages/uc-pxx-leds/tests/test-daemon.sh - the LED daemon with fake LEDs, a stub boot-control tool and a socket
+        run: sh packages/uc-pxx-leds/tests/test-daemon.sh
+      - name: packages/uc-pxx-leds/tests/test-cli.sh - the command uc-pxx-led against the daemon
+        run: sh packages/uc-pxx-leds/tests/test-cli.sh
       - name: kernel/tests/test-build-kernel.sh - the pin, the initramfs input, the fragment and the device trees of ci/build-kernel.sh
         run: sh kernel/tests/test-build-kernel.sh
       - name: rootfs/tests/test-kernel-pins.sh - the rootfs kernel package matches kernel/KERNEL_REV.lts
@@ -80,8 +82,12 @@ jobs:
         with:
           repository: tsx-mainline/tsx-linux-common
           path: tsx-linux-common
-      - name: rootfs/tests/test-esphome-plugin.sh - the plugin with fake LEDs, a fake input device and a FIFO
+      - name: rootfs/tests/test-esphome-plugin.sh - the board plugin with a fake input device
         run: sh rootfs/tests/test-esphome-plugin.sh
+        env:
+          TSX_COMMON: ${{ github.workspace }}/tsx-linux-common
+      - name: packages/uc-pxx-leds/tests/test-plugin.sh - the LED plugin with a stand-in daemon and fake LEDs
+        run: sh packages/uc-pxx-leds/tests/test-plugin.sh
         env:
           TSX_COMMON: ${{ github.workspace }}/tsx-linux-common
 

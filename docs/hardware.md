@@ -12,7 +12,7 @@ mainline kernel. The state comes from the bring-up work on one unit.
 | Display | 1200x1920 MIPI DSI, Himax panel, rotated 270 degrees |
 | GPU | Mali-T860, panfrost driver, display through rockchip-drm |
 | Touch | Atmel mXT1066 on i2c4, with six T15 touch keys |
-| LEDs | RGB status LED (green, red, blue) and four key LEDs |
+| LEDs | RGB status LED (green, red, blue) and four key indicators (see [leds.md](leds.md)) |
 | Audio | AIC3104 codec on I2S0 SDO1 |
 | Microphones | A speakerphone pair and a handset microphone |
 | Network | GMAC to an RTL8364B switch (LAN port and PC port) |
@@ -44,30 +44,29 @@ The touch controller reports six touch keys (object T15). The layout below is
 verified with evtest on the UC-P10. A press of each key from left to right gives
 the codes 148, 149, 202, 114, 115 and 113.
 
-| Place (left to right) | Key | Key code | LED |
+| Place (left to right) | Key | Key code | Indicator LED |
 |---|---|---|---|
-| 1 | Teams | `KEY_PROG1` (148) | `teams_white` (key LED 1) |
-| 2 | Headset | `KEY_PROG2` (149) | `mute_headset` (key LED 2) |
-| 3 | Speaker | `KEY_PROG3` (202) | `mute_speaker` (key LED 3) |
+| 1 | Teams | `KEY_PROG1` (148) | `teams_white` (Teams indicator) |
+| 2 | Headset | `KEY_PROG2` (149) | `mute_headset` (Headset indicator) |
+| 3 | Speaker | `KEY_PROG3` (202) | `mute_speaker` (Speaker indicator) |
 | 4 | Volume down | `KEY_VOLUMEDOWN` (114) | none |
 | 5 | Volume up | `KEY_VOLUMEUP` (115) | none |
-| 6 | Mic (mute) | `KEY_MUTE` (113) | `mute_red` (key LED 4) |
+| 6 | Mic (mute) | `KEY_MUTE` (113) | `mute_red` (Mic indicator) |
 
 The device tree lists the codes in the order of the T15 key index: 113, 115,
 114, 202, 149, 148. The RGB status LED (`green`, `red`, `blue`) is in the
 centre at the bottom.
 
-The RGB status LED shows the boot state ([rootfs.md](rootfs.md) "Status
-LED"). Blue with the heartbeat trigger means that slot A is not marked
-successful yet. Solid green means that it is. Solid red means that the A/B
-state is unknown and nobody may reboot ([boot-control.md](boot-control.md)).
+The LEDs are status indicators, not key backlights. They are on/off LEDs. The
+package `uc-pxx-leds` owns all seven of them ([leds.md](leds.md)). The RGB status
+LED shows the boot state. Blue with the heartbeat trigger means that slot A is
+not marked successful yet. Solid green means that it is. A lit `red` LED means
+that the A/B state is unknown and nobody may reboot
+([boot-control.md](boot-control.md)).
 
-The file `rootfs/overlay/etc/tsx/buttons-board.conf` has the key names, the
-codes and the LEDs for `tsx-buttons`. The key LEDs are plain on/off GPIO LEDs.
-The file sets `LED_MODE=onoff` and names the four LEDs with `LED_KEY_1` to
-`LED_KEY_4`. Each `button` line that has an LED ends with `led=N`. A key LED is
-on while the level of the key LEDs is above 0. Home Assistant sets that level.
-This needs a tsx-linux-common that has `LED_MODE=onoff`.
+The file `rootfs/overlay/etc/tsx/buttons-board.conf` has the key names and the
+codes for `tsx-buttons`. It has no LED setting, so `tsx-buttons` does not touch
+the LEDs.
 
 To verify the order, run `evtest` on the touch input device and press the
 keys from left to right. The codes must appear in the order of the table.

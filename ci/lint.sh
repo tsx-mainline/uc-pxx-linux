@@ -48,7 +48,8 @@ echo "== docs: relative links and anchors resolve =="
 python3 ci/check-doc-links.py || { echo "FAIL: doc links"; fail=1; }
 
 echo "== overlay programs and services are executable =="
-for f in rootfs/overlay/usr/local/sbin/* rootfs/overlay/usr/local/bin/* rootfs/overlay/etc/init.d/*; do
+for f in rootfs/overlay/usr/local/sbin/* rootfs/overlay/usr/local/bin/* rootfs/overlay/etc/init.d/* \
+	packages/*/root/usr/local/sbin/* packages/*/root/usr/local/bin/* packages/*/root/etc/init.d/*; do
 	[ -e "$f" ] || continue
 	[ -x "$f" ] || { echo "FAIL: $f is not executable"; fail=1; }
 done

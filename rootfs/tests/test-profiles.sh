@@ -52,7 +52,7 @@ for f in packages.txt packages-tsx.txt; do
 	sh "$PS" packages ha "$HERE/$f" > "$T/ha.$f"
 	cmp -s "$T/all.$f" "$T/ha.$f" && ok "$f: same lines in the same order" || bad "$f: ha differs from the file"
 done
-want_default="networking chronyd sshd seatd crond uc-pxx-audio uc-pxx-als uc-pxx-presence tsx-buttons tsx-idled tsx-panelctl tsx-bt dbus avahi-daemon tsx-sendspin tsx-esphome tsx-mqtt tsx-autoupdate tsx-setup-helper tsx-setupd kiosk uc-pxx-status-led uc-pxx-leds uc-pxx-boot-ok local"
+want_default="networking chronyd sshd seatd crond uc-pxx-audio uc-pxx-als uc-pxx-presence tsx-buttons tsx-idled tsx-panelctl tsx-bt dbus avahi-daemon tsx-sendspin tsx-esphome tsx-mqtt tsx-autoupdate tsx-setup-helper tsx-setupd kiosk uc-pxx-leds uc-pxx-boot-ok local"
 eq "$(sh "$PS" entries ha svc | awk '$1 == "default" { print $2 }' | sort | tr '\n' ' ')" "$(echo $want_default | tr ' ' '\n' | sort | tr '\n' ' ')" "ha: the services of the default runlevel"
 eq "$(sh "$PS" entries ha svc | awk '$1 == "boot" { print $2 }' | sort | tr '\n' ' ')" "tsx-config tsx-data tsx-hostname tsx-setup uc-pxx-firmware uc-pxx-lvm uc-pxx-switch uc-pxx-watchdog " "ha: the services of the boot runlevel"
 eq "$(sh "$PS" entries ha user | sort | tr '\n' ' ')" "kiosk tsx-setup " "ha: the users"
@@ -67,7 +67,7 @@ for p in openssh-server busybox tsx-keys uc-pxx-kernel-lts alsa-utils bluez-depr
 done
 sv=$(sh "$PS" entries console svc | awk '{ print $2 }' | grep -E 'kiosk|setup-helper|setupd|mqtt|esphome|sendspin|voice|^tsx-bt$|seatd')
 eq "$sv" "" "no kiosk, setup page, HA or seat service"
-for s in sshd tsx-config tsx-autoupdate uc-pxx-audio tsx-panelctl tsx-idled tsx-buttons uc-pxx-boot-ok uc-pxx-als uc-pxx-presence uc-pxx-status-led uc-pxx-switch uc-pxx-firmware; do
+for s in sshd tsx-config tsx-autoupdate uc-pxx-audio tsx-panelctl tsx-idled tsx-buttons uc-pxx-boot-ok uc-pxx-als uc-pxx-presence uc-pxx-leds uc-pxx-switch uc-pxx-firmware; do
 	sh "$PS" has console svc $s && ok "console keeps service $s" || bad "console lacks service $s"
 done
 eq "$(sh "$PS" entries console user | tr '\n' ' ')" "" "console has no kiosk or setup user"

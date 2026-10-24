@@ -1,0 +1,585 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""uc-pxx-leds: the only writer of the seven status LEDs of the UC-P10.
+
+The LEDs are plain on/off class devices in /sys/class/leds:
+
+  teams_white, mute_headset, mute_speaker, mute_red   the indicators of the
+                                                       Teams, Headset, Speaker
+                                                       and Mic keys
+  red, green, blue                                    the RGB status LED
+
+Indicators (names teams, headset, speaker, mic): off, on, or blink (slow or
+fast). All are off at boot.
+
+Status LED: a color (off, red, green, blue, yellow, cyan, magenta, white) and a
+mode (solid, blink, heartbeat). The daemon owns it until the boot is good:
+blue heartbeat while slot A is not marked successful, then solid green. A
+command can change it only after that.
+
+The boot state comes from `uc-pxx-bootctl status`, which only reads the A/B
+sector. The state is "ok" when slot A is marked successful and the marker
+/run/uc-pxx-slot-a-changed does not exist. The marker means that a script
+changed or armed slot A in this boot. The state is "locked" then, and the
+status LED shows the blue heartbeat again.
+
+Red LED safety latch. The A/B scripts write /sys/class/leds/red/brightness
+when the A/B state is unknown. The daemon never hides that:
+  - The red LED is "latched" when it is on at the start, or when it is on and
+    the daemon did not switch it on. The daemon never writes a latched red LED.
+  - The latch ends when the red LED reads 0 again (a person cleared it).
+  - The daemon turns red off only after it read the value that it wrote.
+  - The daemon never puts a kernel trigger on the red LED. It makes a red
+    pattern (blink, heartbeat) itself with plain writes, so that every change
+    of the LED by another program shows.
+  - While the boot is not good, the daemon does not write red at all.
+
+Control: a stream socket (SOCK_STREAM) at /run/tsx/uc-pxx-leds.sock, group
+kiosk, mode 0660. A client sends one line and reads one answer line ("ok" or
+"err REASON"), or the state text for "get". The commands are fixed:
+
+  ind teams|headset|speaker|mic on|off
+  ind teams|headset|speaker|mic blink [slow|fast]
+  status auto                             the boot display, then green
+  status off
+  status COLOR [solid|heartbeat]
+  status COLOR blink [slow|fast]
+  get                                     the state file text
+
+Every other line is refused. The daemon writes the state file
+/run/tsx/uc-pxx-leds.state (see STATE_KEYS below) before it answers a command.
+
+Persistence: PERSIST=yes in /etc/tsx/uc-pxx-leds.conf (default no) saves the
+commands in /data/uc-pxx-leds.saved and replays them at the next start. A
+status command replays only after the boot is good.
+
+Environment overrides for tests: UC_PXX_LEDS (the LED class folder),
+UC_PXX_LEDS_SOCK, UC_PXX_LEDS_STATE, UC_PXX_LEDS_CONF, UC_PXX_LEDS_SAVE,
+UC_PXX_BOOTCTL, UC_PXX_SLOT_MARK, UC_PXX_LEDS_GROUPS, UC_PXX_BOOT_POLL
+(seconds, default 10), UC_PXX_BOOT_POLL_OK (default 60) and UC_PXX_LEDS_LOOPS.
+"""
+
+import grp
+import os
+import re
+import select
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+LEDS = os.environ.get("UC_PXX_LEDS", "/sys/class/leds")
+RUN = os.environ.get("TSX_RUN_DIR", "/run/tsx")
+SOCK = os.environ.get("UC_PXX_LEDS_SOCK", os.path.join(RUN, "uc-pxx-leds.sock"))
+STATE = os.environ.get("UC_PXX_LEDS_STATE", os.path.join(RUN, "uc-pxx-leds.state"))
+CONF = os.environ.get("UC_PXX_LEDS_CONF", "/etc/tsx/uc-pxx-leds.conf")
+SAVE = os.environ.get("UC_PXX_LEDS_SAVE", "/data/uc-pxx-leds.saved")
+BOOTCTL = os.environ.get("UC_PXX_BOOTCTL", "/usr/sbin/uc-pxx-bootctl")
+SLOT_MARK = os.environ.get("UC_PXX_SLOT_MARK", "/run/uc-pxx-slot-a-changed")
+GROUPS = os.environ.get("UC_PXX_LEDS_GROUPS", "kiosk tsx-panel-app").split()
+POLL_WAIT = float(os.environ.get("UC_PXX_BOOT_POLL", "10"))
+POLL_OK = float(os.environ.get("UC_PXX_BOOT_POLL_OK", "60"))
+
+INDICATORS = {"teams": "teams_white", "headset": "mute_headset", "speaker": "mute_speaker", "mic": "mute_red"}
+COLORS = {"off": (0, 0, 0), "red": (1, 0, 0), "green": (0, 1, 0), "blue": (0, 0, 1),
+          "yellow": (1, 1, 0), "cyan": (0, 1, 1), "magenta": (1, 0, 1), "white": (1, 1, 1)}
+CHANNELS = ("red", "green", "blue")
+MODES = ("solid", "blink", "heartbeat")
+SPEEDS = {"slow": 0.5, "fast": 0.125}          # seconds of one half period
+# One cycle of a software pattern: (seconds, on)
+HEARTBEAT = ((0.07, 1), (0.13, 0), (0.07, 1), (0.73, 0))
+MAX_LINE = 64
+KEEP = ("keep", None)       # the red channel while the boot is not good: write nothing
+
+
+class Bad(Exception):
+    """A refused command. The text is the reason in the answer."""
+
+
+def log(msg):
+    print("uc-pxx-leds: %s" % msg, file=sys.stderr, flush=True)
+
+
+def clean(text):
+    """Text for the log: printable ASCII only, at most 60 characters."""
+    return "".join(c if 32 <= ord(c) < 127 else "?" for c in text)[:60]
+
+
+def read_text(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fobj:
+            return fobj.read().strip()
+    except OSError:
+        return None
+
+
+def read_int(path):
+    try:
+        return int(read_text(path) or "")
+    except ValueError:
+        return None
+
+
+def write_text(path, text):
+    try:
+        with open(path, "w", encoding="utf-8") as fobj:
+            fobj.write(text)
+        return True
+    except OSError:
+        return False
+
+
+def replace_file(path, text, mode):
+    """Write a file in one step: a temporary file, then a rename."""
+    tmp = path + ".tmp"
+    if not write_text(tmp, text):
+        return False
+    try:
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except OSError:
+        return False
+    return True
+
+
+def parse(line):
+    """Check one command line. Return a tuple, or raise Bad.
+
+    ("ind", name, mode, speed)         mode off|on|blink, speed slow|fast|None
+    ("status", None)                   auto
+    ("status", (color, mode, speed))
+    ("get",)
+    """
+    if not line or len(line) > MAX_LINE or not line.isascii() or not line.isprintable():
+        raise Bad("bad-line")
+    w = line.split()
+    if w == ["get"]:
+        return ("get",)
+    if len(w) in (3, 4) and w[0] == "ind" and w[1] in INDICATORS:
+        if len(w) == 3 and w[2] in ("on", "off"):
+            return ("ind", w[1], w[2], None)
+        if w[2] == "blink" and (len(w) == 3 or w[3] in SPEEDS):
+            return ("ind", w[1], "blink", w[3] if len(w) == 4 else "slow")
+    elif w[:1] == ["status"] and 2 <= len(w) <= 4:
+        if w == ["status", "auto"]:
+            return ("status", None)
+        if w[1] not in COLORS:
+            raise Bad("bad-command")
+        if w[1] == "off":
+            if len(w) == 2:
+                return ("status", ("off", "solid", None))
+        elif len(w) == 2:
+            return ("status", (w[1], "solid", None))
+        elif len(w) == 3 and w[2] in ("solid", "heartbeat"):
+            return ("status", (w[1], w[2], None))
+        elif w[2] == "blink" and (len(w) == 3 or w[3] in SPEEDS):
+            return ("status", (w[1], "blink", w[3] if len(w) == 4 else "slow"))
+    raise Bad("bad-command")
+
+
+def pattern(mode, speed, now):
+    """The value of a software pattern at time NOW and the seconds until it
+    changes. mode is blink or heartbeat."""
+    if mode == "blink":
+        half = SPEEDS[speed or "slow"]
+        cycle = ((half, 1), (half, 0))
+    else:
+        cycle = HEARTBEAT
+    pos = now % sum(d for d, _ in cycle)
+    for dur, val in cycle:
+        if pos < dur:
+            return val, dur - pos
+        pos -= dur
+    return 0, cycle[0][0]
+
+
+def color_name(bits):
+    for name, val in COLORS.items():
+        if val == tuple(bits):
+            return name
+    return "off"
+
+
+def words(*items):
+    return " ".join(str(i) for i in items if i is not None)
+
+
+class Leds:
+    def __init__(self):
+        self.stop = False
+        self.reload = False
+        self.persist = False
+        self.red_path = os.path.join(LEDS, "red", "brightness")
+        cur = read_int(self.red_path)
+        self.red_latched = bool(cur)          # on at the start: not ours
+        self.last_red = None if cur else 0    # what this daemon wrote last
+        self.ind = {name: ("off", None) for name in INDICATORS}
+        self.status = None                    # None: auto, else (color, mode, speed)
+        self.boot = "wait"
+        self.boot_due = 0.0
+        # LED -> the kernel triggers it offers, read now, before the first write
+        self.triggers = {}
+        for led in list(INDICATORS.values()) + list(CHANNELS):
+            self.has_trigger(led, "")
+        self.clock = time.monotonic
+        self.applied = {}                     # LED -> what is set in sysfs
+        self.soft_val = {}                    # LED -> value of the last software write
+        self.written = None
+        self.read_conf()
+        self.load()
+
+    # ---- settings
+    def read_conf(self):
+        value = "no"
+        for line in (read_text(CONF) or "").splitlines():
+            line = line.strip()
+            if line.startswith("PERSIST="):
+                value = line.split("=", 1)[1].strip().strip("\"'")
+        self.persist = value in ("yes", "on", "1", "true")
+
+    def save(self):
+        if not self.persist:
+            return
+        lines = ["ind %s" % words(n, *self.ind[n]) for n in INDICATORS]
+        lines.append("status %s" % ("auto" if self.status is None else words(*self.status)))
+        if not replace_file(SAVE, "\n".join(lines) + "\n", 0o644):
+            log("cannot save to %s" % SAVE)
+
+    def load(self):
+        """Replay the saved commands. A line that does not parse is skipped."""
+        if not self.persist:
+            return
+        for line in (read_text(SAVE) or "").splitlines():
+            try:
+                self.apply(parse(line.strip()))
+            except Bad:
+                log("saved line skipped: %s" % clean(line))
+
+    # ---- the boot state
+    def read_boot(self):
+        if os.path.exists(SLOT_MARK):
+            return "locked"
+        try:
+            res = subprocess.run([BOOTCTL, "status"], check=False, timeout=5, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        except (OSError, subprocess.SubprocessError):
+            return "wait"
+        m = re.search(r"current: A\{prio \d+ tries \d+ succ ([01])\}", res.stdout.decode("ascii", "replace"))
+        return "ok" if res.returncode == 0 and m and m.group(1) == "1" else "wait"
+
+    def update_boot(self, now):
+        if os.path.exists(SLOT_MARK):
+            new = "locked"
+        elif self.boot == "locked" or now >= self.boot_due:
+            new = self.read_boot()
+            self.boot_due = now + (POLL_OK if new == "ok" else POLL_WAIT)
+        else:
+            new = self.boot
+        if new != self.boot:
+            log("boot state %s -> %s" % (self.boot, new))
+            self.boot = new
+
+    # ---- the red LED
+    def red_check(self):
+        """Update the latch from what the red LED shows now. Return the value."""
+        cur = read_int(self.red_path)
+        if cur is None:
+            return None
+        if self.red_latched:
+            if cur == 0:               # a person cleared it
+                self.red_latched = False
+                self.last_red = 0
+                log("the red LED reads 0 again: the latch ends")
+        elif cur and self.last_red != 1:
+            self.red_latched = True    # lit by somebody else
+            log("the red LED was lit by another program: latched, it is never written")
+        elif not cur and self.last_red == 1:
+            self.last_red = 0          # somebody cleared our red
+        return cur
+
+    def write_red(self, want, cur):
+        if cur is None or self.red_latched or cur == want:
+            return
+        # Not latched, so a lit red LED is ours (last_red is 1).
+        if write_text(self.red_path, str(want)):
+            self.last_red = want
+
+    # ---- what each LED should do
+    def effective_status(self):
+        if self.boot != "ok":
+            return ("blue", "heartbeat", None)
+        return self.status or ("green", "solid", None)
+
+    def spec(self):
+        """LED -> (mode, speed), mode off|on|blink|heartbeat or KEEP."""
+        out = {}
+        for name, led in INDICATORS.items():
+            out[led] = self.ind[name]
+        color, mode, speed = self.effective_status()
+        for chan, bit in zip(CHANNELS, COLORS[color]):
+            if not bit:
+                out[chan] = ("off", None)
+            else:
+                out[chan] = ("on", None) if mode == "solid" else (mode, speed)
+        if self.boot != "ok":
+            out["red"] = KEEP
+        return out
+
+    def has_trigger(self, led, name):
+        """Whether the LED offers the kernel trigger. The list is read once."""
+        if led not in self.triggers:
+            text = read_text(os.path.join(LEDS, led, "trigger")) or ""
+            self.triggers[led] = [w.strip("[]") for w in text.split()]
+        return name in self.triggers[led]
+
+    def set_plain(self, led, val):
+        """Solid value: no trigger, then the brightness."""
+        base = os.path.join(LEDS, led)
+        if self.applied.get(led) != ("none",):
+            write_text(os.path.join(base, "trigger"), "none")
+            self.applied[led] = ("none",)
+        if self.soft_val.get(led) != val:
+            if write_text(os.path.join(base, "brightness"), str(val)):
+                self.soft_val[led] = val
+
+    def apply_led(self, led, mode, speed, now):
+        """Set one LED. Return the seconds until a software pattern changes,
+        or None."""
+        if not os.path.isdir(os.path.join(LEDS, led)):
+            return None
+        if led == "red":
+            return self.apply_red(mode, speed, now)
+        if mode in ("off", "on"):
+            self.set_plain(led, 1 if mode == "on" else 0)
+            return None
+        trig = "timer" if mode == "blink" else "heartbeat"
+        if self.has_trigger(led, trig):
+            key = (trig, speed)
+            if self.applied.get(led) != key:
+                base = os.path.join(LEDS, led)
+                write_text(os.path.join(base, "trigger"), trig)
+                if trig == "timer":
+                    ms = str(int(SPEEDS[speed or "slow"] * 1000))
+                    write_text(os.path.join(base, "delay_on"), ms)
+                    write_text(os.path.join(base, "delay_off"), ms)
+                self.applied[led] = key
+                self.soft_val.pop(led, None)
+            return None
+        val, wait = pattern(mode, speed, now)     # no such trigger: do it in software
+        self.set_plain(led, val)
+        return wait
+
+    def apply_red(self, mode, speed, now):
+        if mode == "keep":
+            return None
+        cur = self.red_check()
+        wait = None
+        if mode in ("blink", "heartbeat"):
+            want, wait = pattern(mode, speed, now)
+        else:
+            want = 1 if mode == "on" else 0
+        self.write_red(want, cur)
+        return None if self.red_latched else wait
+
+    def sync(self, now):
+        """Bring the LEDs to the wanted state. Return the seconds until the
+        next software step, or None."""
+        wait = None
+        for led, (mode, speed) in self.spec().items():
+            w = self.apply_led(led, mode, speed, now)
+            if w is not None and (wait is None or w < wait):
+                wait = w
+        return wait
+
+    # ---- commands
+    def apply(self, cmd):
+        if cmd[0] == "ind":
+            self.ind[cmd[1]] = (cmd[2], cmd[3])
+        elif cmd[0] == "status":
+            self.status = cmd[1]
+
+    def handle(self, line):
+        """Run one command line. Return the answer text."""
+        try:
+            cmd = parse(line)
+        except Bad as err:
+            log("refused: %s" % clean(line))
+            return "err %s" % err
+        if cmd[0] == "get":
+            return self.state_text().rstrip("\n")
+        if cmd[0] == "status" and cmd[1] is not None and self.boot != "ok":
+            log("status refused (boot %s)" % self.boot)
+            return "err boot-%s" % self.boot
+        self.apply(cmd)
+        self.save()
+        self.tick(self.clock())
+        return "ok"
+
+    # ---- state file
+    def shown(self):
+        color, mode, speed = self.effective_status()
+        bits = list(COLORS[color])
+        if self.red_latched or (self.boot != "ok" and read_int(self.red_path)):
+            bits[0] = 1                # the red LED is lit and the daemon cannot change it
+        shown = color_name(bits)
+        if shown != color:
+            return words(shown, "solid")
+        return words(color, mode, speed if mode == "blink" else None)
+
+    def state_text(self):
+        lines = ["boot %s" % self.boot,
+                 "red %s" % ("latched" if self.red_latched else "free")]
+        for name in INDICATORS:
+            lines.append("%s %s" % (name, words(*self.ind[name])))
+        lines.append("status %s" % ("auto" if self.status is None else words(*self.status)))
+        lines.append("shown %s" % self.shown())
+        lines.append("persist %s" % ("yes" if self.persist else "no"))
+        return "\n".join(lines) + "\n"
+
+    def publish(self):
+        text = self.state_text()
+        if text != self.written and replace_file(STATE, text, 0o644):
+            self.written = text
+
+    def tick(self, now):
+        """One step: look at the red LED and the boot state, set the LEDs,
+        write the state file. Return the seconds until the next step."""
+        self.red_check()
+        self.update_boot(now)
+        wait = self.sync(now)
+        self.publish()
+        return 0.5 if wait is None else max(0.01, min(0.5, wait))
+
+
+class Clients:
+    """The connections of the control socket. A client has two seconds to send
+    its line."""
+
+    def __init__(self, listener):
+        self.listener = listener
+        self.conns = {}            # socket -> [bytes, deadline]
+
+    def fds(self):
+        return [self.listener] + list(self.conns)
+
+    def accept(self):
+        try:
+            conn, _ = self.listener.accept()
+        except OSError:
+            return
+        conn.setblocking(False)
+        if len(self.conns) >= 8:
+            conn.close()
+            return
+        self.conns[conn] = [b"", time.monotonic() + 2.0]
+
+    def expire(self):
+        now = time.monotonic()
+        for conn in [c for c, (_, end) in self.conns.items() if end < now]:
+            self.close(conn)
+
+    def close(self, conn):
+        self.conns.pop(conn, None)
+        try:
+            conn.close()
+        except OSError:
+            pass
+
+    def read(self, conn, leds):
+        entry = self.conns[conn]
+        try:
+            data = conn.recv(256)
+        except BlockingIOError:
+            return
+        except OSError:
+            self.close(conn)
+            return
+        entry[0] += data
+        if b"\n" in entry[0] or not data:       # a full line, or the client closed
+            answer = leds.handle(entry[0].split(b"\n", 1)[0].decode("ascii", "replace"))
+        elif len(entry[0]) >= 256:
+            answer = "err bad-line"
+        else:
+            return
+        try:
+            conn.setblocking(True)
+            conn.settimeout(0.5)
+            conn.sendall((answer + "\n").encode("ascii", "replace"))
+        except OSError:
+            pass
+        self.close(conn)
+
+
+def make_socket():
+    os.makedirs(os.path.dirname(SOCK), mode=0o755, exist_ok=True)
+    try:
+        os.unlink(SOCK)
+    except FileNotFoundError:
+        pass
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.bind(SOCK)
+    gid = None
+    for name in GROUPS:
+        try:
+            gid = grp.getgrnam(name).gr_gid
+            break
+        except KeyError:
+            continue
+    if gid is not None:
+        os.chown(SOCK, -1, gid)        # the owner stays (root when the service runs)
+        os.chmod(SOCK, 0o660)
+    else:
+        os.chmod(SOCK, 0o600)
+        log("no group of %s: only root can use %s" % (" ".join(GROUPS), SOCK))
+    sock.listen(8)
+    sock.setblocking(False)
+    return sock
+
+
+def main():
+    if len(sys.argv) > 1:
+        print("usage: uc-pxx-leds", file=sys.stderr)
+        return 2
+    leds = Leds()
+    try:
+        listener = make_socket()
+    except OSError as err:
+        log("cannot set up %s: %s" % (SOCK, err))
+        return 1
+    clients = Clients(listener)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: setattr(leds, "stop", True))
+    signal.signal(signal.SIGHUP, lambda *_: setattr(leds, "reload", True))
+    loops = int(os.environ.get("UC_PXX_LEDS_LOOPS", "0"))
+    count = 0
+    log("ready, red LED %s, persistence %s" % ("latched" if leds.red_latched else "free",
+                                                  "on" if leds.persist else "off"))
+    while not leds.stop and (loops == 0 or count < loops):
+        count += 1
+        if leds.reload:
+            leds.reload = False
+            leds.read_conf()
+            leds.save()
+        wait = leds.tick(time.monotonic())
+        end = time.monotonic() + wait
+        while not leds.stop and time.monotonic() < end:
+            ready, _, _ = select.select(clients.fds(), [], [], max(0.0, end - time.monotonic()))
+            for fobj in ready:
+                if fobj is listener:
+                    clients.accept()
+                else:
+                    clients.read(fobj, leds)
+            clients.expire()
+            if ready:
+                break          # a command can change the wait: run the step again
+    leds.publish()
+    try:
+        os.unlink(SOCK)
+    except OSError:
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
