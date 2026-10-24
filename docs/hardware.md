@@ -46,20 +46,23 @@ the codes 148, 149, 202, 114, 115 and 113.
 
 | Place (left to right) | Key | Key code | LED |
 |---|---|---|---|
-| 1 | Teams | `KEY_PROG1` (148) | `teams_white` |
-| 2 | Headset | `KEY_PROG2` (149) | `mute_headset` |
-| 3 | Speaker | `KEY_PROG3` (202) | `mute_speaker` |
+| 1 | Teams | `KEY_PROG1` (148) | `teams_white` (key LED 1) |
+| 2 | Headset | `KEY_PROG2` (149) | `mute_headset` (key LED 2) |
+| 3 | Speaker | `KEY_PROG3` (202) | `mute_speaker` (key LED 3) |
 | 4 | Volume down | `KEY_VOLUMEDOWN` (114) | none |
 | 5 | Volume up | `KEY_VOLUMEUP` (115) | none |
-| 6 | Mic (mute) | `KEY_MUTE` (113) | `mute_red` |
+| 6 | Mic (mute) | `KEY_MUTE` (113) | `mute_red` (key LED 4) |
 
 The device tree lists the codes in the order of the T15 key index: 113, 115,
 114, 202, 149, 148. The RGB status LED (`green`, `red`, `blue`) is in the
 centre at the bottom.
 
-The file `rootfs/overlay/etc/tsx/buttons-board.conf` has the key names and
-codes for `tsx-buttons`. The key LEDs are plain on/off LEDs. The LED model of
-`tsx-buttons` does not fit them yet ([rootfs.md](rootfs.md)).
+The file `rootfs/overlay/etc/tsx/buttons-board.conf` has the key names, the
+codes and the LEDs for `tsx-buttons`. The key LEDs are plain on/off GPIO LEDs.
+The file sets `LED_MODE=onoff` and names the four LEDs with `LED_KEY_1` to
+`LED_KEY_4`. Each `button` line that has an LED ends with `led=N`. A key LED is
+on while the level of the key LEDs is above 0. Home Assistant sets that level.
+This needs a tsx-linux-common that has `LED_MODE=onoff`.
 
 To verify the order, run `evtest` on the touch input device and press the
 keys from left to right. The codes must appear in the order of the table.

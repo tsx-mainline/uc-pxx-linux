@@ -89,12 +89,20 @@ grep -qx 'ttyS2' "$HERE/overlay/etc/securetty" && ok "securetty lists ttyS2" || 
 grep -q 'ttyS2' "$HERE/overlay/etc/inittab" && ok "inittab has a getty on ttyS2" || bad "inittab lacks ttyS2"
 grep -q '^LABEL=tsxroot[[:space:]]*/[[:space:]]' "$HERE/overlay/etc/fstab" && ok "fstab: root by the label tsxroot" || bad "fstab: no root"
 grep -q '^LABEL=tsxdata[[:space:]]*/data[[:space:]]' "$HERE/overlay/etc/fstab" && ok "fstab: /data by the label tsxdata" || bad "fstab: no /data"
-pairs=$(awk '$1 == "button" { print $2 "=" $3 }' "$HERE/overlay/etc/tsx/buttons-board.conf" | tr '\n' ' ')
+CONF=$HERE/overlay/etc/tsx/buttons-board.conf
+pairs=$(awk '$1 == "button" { print $2 "=" $3 }' "$CONF" | tr '\n' ' ')
 eq "$pairs" "teams=148 headset=149 speaker=202 volume_down=114 volume_up=115 mic=113 " "buttons-board.conf: the six keys in physical order"
-grep -q 'verified with evtest on the UC-P10' "$HERE/overlay/etc/tsx/buttons-board.conf" && ok "buttons-board.conf: marked as verified" || bad "buttons-board.conf: no verify mark"
-grep -q '^SLIDE_STEP=0' "$HERE/overlay/etc/tsx/buttons-board.conf" && ok "buttons-board.conf: no slide" || bad "buttons-board.conf: SLIDE_STEP"
-for l in teams_white mute_headset mute_speaker mute_red; do
-	grep -q "^#   $l " "$HERE/overlay/etc/tsx/buttons-board.conf" && ok "buttons-board.conf: names the LED $l" || bad "buttons-board.conf: no LED $l"
+leds=$(awk '$1 == "button" { l = "none"; for (i = 4; i <= NF; i++) if ($i ~ /^led=/) l = substr($i, 5); print $2 "=" l }' "$CONF" | tr '\n' ' ')
+eq "$leds" "teams=1 headset=2 speaker=3 volume_down=none volume_up=none mic=4 " "buttons-board.conf: Teams 1, Headset 2, Speaker 3, Mic 4, no LED on the volume keys"
+grep -q 'verified with evtest on the UC-P10' "$CONF" && ok "buttons-board.conf: marked as verified" || bad "buttons-board.conf: no verify mark"
+grep -q '^SLIDE_STEP=0' "$CONF" && ok "buttons-board.conf: no slide" || bad "buttons-board.conf: SLIDE_STEP"
+grep -qx 'LED_MODE=onoff' "$CONF" && ok "buttons-board.conf: LED_MODE=onoff" || bad "buttons-board.conf: no LED_MODE=onoff"
+grep -Eq '^(LED_PWM|LED_KEY_PREFIX)=' "$CONF" && bad "buttons-board.conf: LED_PWM or LED_KEY_PREFIX set" || ok "buttons-board.conf: no LED_PWM and no LED_KEY_PREFIX"
+names=$(sed -n 's/^LED_KEY_\([0-9]*\)=\(.*\)$/\1=\2/p' "$CONF" | tr '\n' ' ')
+eq "$names" "1=teams_white 2=mute_headset 3=mute_speaker 4=mute_red " "buttons-board.conf: the names of the four key LEDs"
+# every key LED number that a button uses has a name, and no name is unused
+for n in $(awk '$1 == "button" { for (i = 4; i <= NF; i++) if ($i ~ /^led=/) print substr($i, 5) }' "$CONF"); do
+	grep -q "^LED_KEY_$n=" "$CONF" && ok "key LED $n has a LED name" || bad "key LED $n has no LED_KEY_$n"
 done
 echo "$N passed, $F failed"
 [ "$F" = 0 ]

@@ -205,9 +205,9 @@ settings are in `/etc/conf.d/uc-pxx-watchdog`.
 
 `/etc/tsx/buttons-board.conf` lists the six touch keys in their physical
 order: `teams`, `headset`, `speaker`, `volume_down`, `volume_up` and `mic`
-([hardware.md](hardware.md) has the table). The layout is not verified with
-evtest yet. The LEDs do not fit the LED scheme of `tsx-buttons` yet. See the
-comments in the file.
+([hardware.md](hardware.md) has the table). The layout is verified with
+evtest. The four key LEDs are on/off LEDs: the file sets `LED_MODE=onoff`, and
+the keys Teams, Headset, Speaker and Mic use `led=1` to `led=4`.
 
 ## Tests
 
@@ -216,7 +216,7 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 | Test | Checks |
 |---|---|
 | `rootfs/tests/test-profiles.sh` | The package, service and image file lists of the profiles |
-| `rootfs/tests/test-board.sh` | The board values, the MAC address, the model and the key codes |
+| `rootfs/tests/test-board.sh` | The board values, the board hook, the MAC address, the model, the key codes and the key LEDs |
 | `rootfs/tests/test-audio.sh` | `uc-pxx-audio` with a stub `amixer` |
 | `rootfs/tests/test-firmware.sh` | `uc-pxx-firmware` with a made-up vendor folder |
 | `rootfs/tests/test-switch.sh` | `uc-pxx-switch` with stub tools |
@@ -231,5 +231,4 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 - The light sensor feed (`uc-pxx-als`).
 - Chromium flags for panfrost (`TSX_BROWSER_GL_FLAGS`).
 - The Bluetooth proxy default (`TSX_BT_PROXY_DEFAULT` is `off` until tested).
-- Key LEDs in `tsx-buttons`.
 - The initramfs and the rescue system.
