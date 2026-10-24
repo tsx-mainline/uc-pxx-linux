@@ -1,0 +1,183 @@
+name: release
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Nothing here downloads or bundles a vendor file. The kernel and the rootfs
+# come from this repo and from the pinned source of the kernel fork. The rootfs
+# comes from packages: the published apk tree of this project, and the private
+# packages that it lacks (see the rootfs job). uc-pxx-firmware copies the
+# firmware from the unit itself at boot. Every job runs on a plain
+# ubuntu-latest runner, with no privileged container.
+#
+# Job graph:
+#   kernel (lts) -> rootfs -> publish
+#
+# The release job needs one secret, TSX_AUTHORIZED_KEYS: the public ssh keys
+# for root. The image allows key login only, so a release without a key
+# cannot be used.
+#
+# TODO: the boot image (kernel/mkimage.sh) is not part of the release. It needs
+# the Rockchip resource for U-Boot, a file that derives from vendor files. The
+# installer must take it from the unit or the kernel package must build the
+# image on the unit. Add the boot image to this workflow after that decision.
+# The installer and the kernel package (uc-pxx-kernel-lts in tsx-aports) do not
+# exist yet.
+jobs:
+  kernel:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [lts]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install the cross compiler and the kernel build tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu make gcc bc bison flex libssl-dev libelf-dev kmod zstd git
+
+      - name: cache the kernel source (${{ matrix.flavor }})
+        uses: actions/cache@v4
+        with:
+          path: ../linux-uc-pxx-${{ matrix.flavor }}
+          key: linux-uc-pxx-${{ matrix.flavor }}-${{ hashFiles(format('kernel/KERNEL_REV.{0}', matrix.flavor)) }}
+
+      - name: build the kernel (ci/build-kernel.sh --flavor ${{ matrix.flavor }})
+        run: ci/build-kernel.sh --flavor ${{ matrix.flavor }} --out out-${{ matrix.flavor }}
+
+      - name: kernel release, commit and sha256
+        run: |
+          cat out-${{ matrix.flavor }}/kernel.release out-${{ matrix.flavor }}/kernel.commit
+          cat out-${{ matrix.flavor }}/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernel-${{ matrix.flavor }}
+          path: |
+            out-${{ matrix.flavor }}/Image
+            out-${{ matrix.flavor }}/rk3399-crestron-ucp10.dtb
+            out-${{ matrix.flavor }}/modules-*.tar.gz
+            out-${{ matrix.flavor }}/kernel.release
+            out-${{ matrix.flavor }}/kernel.commit
+            out-${{ matrix.flavor }}/sha256sums.txt
+          if-no-files-found: error
+
+  # The rootfs comes from packages (docs/rootfs.md "Build the image"). The
+  # published apk tree holds the common packages. It does not hold the private
+  # packages uc-pxx-board and uc-pxx-<profile>. A release has no image without
+  # them, so the job stops at the check with the names that are missing. It
+  # needs a tree that has them: put their files into
+  # apk-tree/v3.24/uc-pxx/aarch64 and index the folder before the build
+  # (docs/rootfs.md "Where the packages come from").
+  rootfs:
+    needs: kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The cache keeps the package files between runs. The script fetches
+      # only what the cache does not have.
+      - name: cache the apk tree
+        uses: actions/cache@v4
+        with:
+          path: apk-tree
+          key: apk-tree-${{ github.run_id }}
+          restore-keys: apk-tree-
+
+      - name: fetch the published apk tree (rootfs/fetch-apk-tree.sh)
+        run: rootfs/fetch-apk-tree.sh apk-tree
+
+      - name: check the apk tree for the private packages (rootfs/check-apk-tree.sh)
+        run: |
+          rootfs/check-apk-tree.sh apk-tree ha || {
+            echo "::error title=no rootfs image::The apk tree lacks the packages above. The board package and the profile packages are private, so the published tree does not hold them. A release needs a tree that does."
+            exit 1
+          }
+
+      - name: register the aarch64 qemu-user binfmt (docker --platform linux/arm64)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: ssh keys for root (secret TSX_AUTHORIZED_KEYS)
+        env:
+          KEYS: ${{ secrets.TSX_AUTHORIZED_KEYS }}
+        run: |
+          [ -n "$KEYS" ] || { echo "the secret TSX_AUTHORIZED_KEYS is empty: the image would have no ssh login"; exit 1; }
+          printf '%s\n' "$KEYS" > rootfs/authorized_keys
+
+      # The kernel package of the tree must match the pin
+      # (rootfs/check-kernel-pins.sh stops the build otherwise).
+      - name: build the rootfs (rootfs/build-rootfs.sh all)
+        env:
+          TSX_BUILD_ID: ${{ github.ref_name }}
+          TSX_APK_LOCAL: ${{ github.workspace }}/apk-tree
+        run: rootfs/build-rootfs.sh all
+
+      - name: manifest, sizes, sha256
+        run: |
+          cat rootfs/out/rootfs.manifest
+          cat rootfs/out/rootfs.sizes
+          cat rootfs/out/rootfs.sha256
+
+      - name: no vendor files in the source tree or the build output
+        run: ci/check-no-proprietary.sh rootfs/out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rootfs
+          path: |
+            rootfs/out/rootfs.tar.gz
+            rootfs/out/rootfs.ext4
+            rootfs/out/rootfs.manifest
+            rootfs/out/rootfs.sizes
+            rootfs/out/rootfs.sha256
+          if-no-files-found: error
+
+  publish:
+    needs: [kernel, rootfs]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: install zstd
+        run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends zstd
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-lts
+          path: release/kernel
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: rootfs
+          path: release/rootfs
+
+      # One archive for the kernel files. The rootfs image can be up to 1.7 GiB
+      # before compression, so it stays a separate asset (the limit of a
+      # release asset is 2 GiB).
+      - name: pack the assets
+        run: |
+          set -eu
+          mkdir -p release/out
+          tar -C release/kernel --zstd -cf release/out/uc-pxx-kernel-lts-bundle.tar.zst .
+          zstd -T0 -12 -q -o release/out/uc-pxx-rootfs.ext4.zst release/rootfs/rootfs.ext4
+          cp release/rootfs/rootfs.sha256 release/rootfs/rootfs.manifest release/out/
+          for f in release/out/*.zst; do
+            [ "$(stat -c %s "$f")" -lt 2147483648 ] || { echo "$f is larger than 2 GiB, too big for a release asset"; exit 1; }
+          done
+          (cd release/out && sha256sum * > SHA256SUMS)
+          ls -l release/out
+
+      - name: attach the build to the GitHub release for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes
+          gh release upload "$TAG" release/out/* --clobber

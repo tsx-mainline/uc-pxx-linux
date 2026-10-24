@@ -1,0 +1,92 @@
+name: rootfs
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# Builds the aarch64 rootfs without kernel modules (the board needs none to
+# boot, docs/kernel.md). The release workflow builds the same rootfs. The
+# initramfs is built into the kernel Image and is not part of this job.
+# No vendor file is fetched or bundled. uc-pxx-firmware copies the firmware
+# from the unit itself at boot. The last step checks the build output.
+#
+# The rootfs comes from packages (docs/rootfs.md "Build the image"). The
+# published apk tree of this project holds the common packages. It does not
+# hold the board package uc-pxx-board or the profile meta packages, because
+# they are private. So the job fetches the published tree and checks it
+# (rootfs/check-apk-tree.sh). A complete tree gives the rootfs. An incomplete
+# tree gives a warning and ends the job without an image. A release needs the
+# rootfs (release.yml fails without it).
+# TODO: the apk category uc-pxx does not exist in tsx-aports yet. Until it does,
+# the tree is always incomplete.
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: register the aarch64 qemu-user binfmt (docker --platform linux/arm64)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      # The key is public. It goes into the rootfs (key login only). The secret
+      # is optional here. Without it the build still runs, but nobody can log
+      # in to the image.
+      - name: ssh keys for root (secret TSX_AUTHORIZED_KEYS, optional)
+        env:
+          KEYS: ${{ secrets.TSX_AUTHORIZED_KEYS }}
+        run: |
+          if [ -n "$KEYS" ]; then printf '%s\n' "$KEYS" > rootfs/authorized_keys; else echo "no TSX_AUTHORIZED_KEYS: the image has no ssh login"; fi
+
+      # The cache keeps the package files between runs. The script fetches only
+      # what the cache does not have.
+      - name: cache the apk tree
+        uses: actions/cache@v4
+        with:
+          path: apk-tree
+          key: apk-tree-${{ github.run_id }}
+          restore-keys: apk-tree-
+
+      - name: fetch the published apk tree (rootfs/fetch-apk-tree.sh)
+        run: rootfs/fetch-apk-tree.sh apk-tree
+
+      - name: check the apk tree for the private packages (rootfs/check-apk-tree.sh)
+        id: tree
+        run: |
+          if rootfs/check-apk-tree.sh apk-tree ha; then
+            echo "complete=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "complete=no" >> "$GITHUB_OUTPUT"
+            echo "::warning title=no rootfs image::The published apk tree lacks private packages (uc-pxx-board and the profile package). This run builds no image."
+          fi
+
+      - name: build the rootfs from packages (rootfs/build-rootfs.sh rootfs)
+        if: steps.tree.outputs.complete == 'yes'
+        env:
+          TSX_BUILD_ID: ${{ github.sha }}
+          TSX_APK_LOCAL: ${{ github.workspace }}/apk-tree
+        run: rootfs/build-rootfs.sh rootfs
+
+      - name: manifest, sizes, sha256
+        if: steps.tree.outputs.complete == 'yes'
+        run: |
+          cat rootfs/out/rootfs.manifest
+          cat rootfs/out/rootfs.sizes
+          cat rootfs/out/rootfs.sha256
+
+      - name: no vendor files in the source tree or the build output
+        run: |
+          if [ -d rootfs/out ]; then ci/check-no-proprietary.sh rootfs/out; else ci/check-no-proprietary.sh; fi
+
+      - uses: actions/upload-artifact@v4
+        if: steps.tree.outputs.complete == 'yes'
+        with:
+          name: rootfs
+          path: |
+            rootfs/out/rootfs.tar.gz
+            rootfs/out/rootfs.ext4
+            rootfs/out/rootfs.manifest
+            rootfs/out/rootfs.sizes
+            rootfs/out/rootfs.sha256
+          if-no-files-found: error

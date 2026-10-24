@@ -1,0 +1,61 @@
+name: tests
+on:
+  push:
+  pull_request:
+
+# These jobs need no hardware and no vendor file. A test that needs a tool
+# that the runner does not have prints SKIPPED and exits 0.
+jobs:
+  lint:
+    name: syntax and smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install busybox
+        run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends busybox
+      - name: ci/lint.sh (shell syntax, py_compile, doc links, overlay modes)
+        run: ci/lint.sh
+
+  doc-links:
+    name: doc links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ci/check-doc-links.py
+        run: python3 ci/check-doc-links.py
+
+  no-proprietary:
+    name: no vendor files in the source tree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ci/check-no-proprietary.sh
+        run: ci/check-no-proprietary.sh
+
+  host-tests:
+    name: host tests (no hardware)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install test tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends busybox python3
+      - name: rootfs/tests/test-profiles.sh - the package, service and image file lists of the console, kiosk and ha profiles
+        run: sh rootfs/tests/test-profiles.sh
+      - name: rootfs/tests/test-board.sh - the board file, the MAC address from the cfg partition and the model
+        run: sh rootfs/tests/test-board.sh
+      - name: rootfs/tests/test-audio.sh - uc-pxx-audio with a stub amixer
+        run: sh rootfs/tests/test-audio.sh
+      - name: rootfs/tests/test-firmware.sh - uc-pxx-firmware with a made-up vendor folder
+        run: sh rootfs/tests/test-firmware.sh
+      - name: rootfs/tests/test-switch.sh - uc-pxx-switch with stub tools
+        run: sh rootfs/tests/test-switch.sh
+      - name: rootfs/tests/test-watchdog.sh - watchdog service timeout and interval checks
+        run: sh rootfs/tests/test-watchdog.sh
+      - name: rootfs/tests/test-kernel-pins.sh - the rootfs kernel package matches kernel/KERNEL_REV.lts
+        run: rootfs/tests/test-kernel-pins.sh
+
+  # TODO: add a job that runs the shared software of tsx-linux-common with the
+  # board files of this repository, as tsx-xx70-linux does. It needs
+  # TSX_PKG_PREFIX in common first (docs/rootfs.md "Board values").
