@@ -6,7 +6,7 @@
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 CROSS=${CROSS_COMPILE:-aarch64-linux-gnu-}
-for t in "${CROSS}gcc" "${CROSS}ld" "${CROSS}objcopy" mkbootimg fdtget dtc python3; do
+for t in "${CROSS}gcc" "${CROSS}ld" "${CROSS}objcopy" mkbootimg fdtget fdtput dtc python3; do
 	command -v "$t" >/dev/null 2>&1 || { echo "SKIPPED: $t is not installed"; exit 0; }
 done
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
@@ -46,6 +46,12 @@ grep -q 'linux payload verified' "$T/log" && ok "the Linux Image is in the file"
 [ "$(head -c 8 "$T/boot.img")" = 'ANDROID!' ] && ok "Android boot image magic" || bad "no boot image magic"
 tok=$(dd if="$T/boot.img" bs=1 skip=48 count=16 2>/dev/null | tr -d '\0')
 [ "$tok" = test-build-1 ] && ok "the board field holds the build token" || bad "board field is '$tok'"
+# the device tree that the shim embeds (at 64 KiB in the kernel part) has the token on its command line
+dd if="$T/boot.img" of="$T/embedded.dtb" bs=1 skip=$((2048 + 65536)) count=4096 2>/dev/null
+args=$(fdtget "$T/embedded.dtb" /chosen bootargs 2>/dev/null)
+[ "$args" = "console=ttyS2,115200n8 rdinit=/init uc-pxx.id=test-build-1" ] && ok "the embedded device tree has uc-pxx.id=<token>" || bad "embedded bootargs are '$args'"
+[ "${args##*uc-pxx.id=}" = "$tok" ] && ok "the header name equals the token on the command line" || bad "header name and command line token differ"
+[ "$(fdtget "$T/good.dtb" /chosen bootargs)" = "console=ttyS2,115200n8 rdinit=/init" ] && ok "the input device tree is not changed" || bad "the input device tree changed"
 # the Image starts at page size + 2 MiB
 cmp -s "$T/Image" "$T/boot.img" -i 0:$((2048 + 2097152)) -n 3145728 && ok "the Image is at 2 MiB behind the first page" || bad "wrong Image offset"
 
@@ -54,6 +60,12 @@ bash "$HERE/mkimage.sh" --board x "$T/Image" "$T/good.dtb" "$T/o" >/dev/null 2>&
 bash "$HERE/mkimage.sh" --resource "$T/res.img" --board 0123456789abcdef "$T/Image" "$T/good.dtb" "$T/o" >/dev/null 2>&1 && bad "a 16 character token must fail" || ok "a token of 16 characters: error"
 bash "$HERE/mkimage.sh" --resource "$T/res.img" --board x "$T/Image" "$T/noargs.dtb" "$T/o" >/dev/null 2>&1 && bad "a device tree without bootargs must fail" || ok "no /chosen/bootargs: error"
 bash "$HERE/mkimage.sh" --resource "$T/res.img" --board x --dest 0x4100000 "$T/Image" "$T/good.dtb" "$T/o" >/dev/null 2>&1 && bad "an unaligned --dest must fail" || ok "unaligned --dest: error"
+bash "$HERE/mkimage.sh" --resource "$T/res.img" --board 'a b' "$T/Image" "$T/good.dtb" "$T/o" >/dev/null 2>&1 && bad "a token with a space must fail" || ok "a token with a space: error"
+dtc -I dts -O dtb -o "$T/hasid.dtb" /dev/stdin 2>/dev/null <<'DTS'
+/dts-v1/;
+/ { #address-cells = <2>; #size-cells = <2>; chosen { bootargs = "console=ttyS2 uc-pxx.id=old"; }; };
+DTS
+bash "$HERE/mkimage.sh" --resource "$T/res.img" --board x "$T/Image" "$T/hasid.dtb" "$T/o" >/dev/null 2>&1 && bad "a device tree with uc-pxx.id must fail" || ok "uc-pxx.id already in the device tree: error"
 UC_PXX_MAX_IMAGE=1000000 bash "$HERE/mkimage.sh" --resource "$T/res.img" --board x "$T/Image" "$T/good.dtb" "$T/o" >/dev/null 2>&1 && bad "an image over the limit must fail" || ok "an image over the size limit: error"
 [ ! -e "$T/o" ] && ok "a refused build leaves no output file" || bad "a refused build wrote a file"
 echo "$N ok, $F failed"

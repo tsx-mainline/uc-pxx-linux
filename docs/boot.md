@@ -62,9 +62,12 @@ voltage regulators. This repository does not hold the resource, because it
 derives from vendor files. `kernel/mkimage.sh` takes its path as a required
 argument. `kernel/mkresource.py` packs a device tree into a resource.
 
-The build token is the same string as `/etc/uc-pxx-build-id` in the built-in
-initramfs. The boot-marking hook uses it to check that the running system is
-the image in the slot. See [boot-control.md](boot-control.md).
+The build token is the same string in two places: the name field of the boot
+image header, and the word `uc-pxx.id=TOKEN` that `kernel/mkimage.sh` adds to
+`/chosen/bootargs` of the embedded device tree. The boot-marking hook reads
+the token from the kernel command line. It uses the token to check that the
+running kernel is the image in the slot. See
+[boot-control.md](boot-control.md).
 
 ### Size limits
 

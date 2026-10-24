@@ -5,7 +5,8 @@
 #   kernel   the shim: stub (bootloader/shim.S), device tree and Linux Image
 #   ramdisk  a dummy file of 20 bytes (the initramfs is built into the Image)
 #   second   the Rockchip resource for U-Boot (--resource)
-#   board    the build token (--board)
+#   board    the build token (--board). The same token is also in the device
+#            tree command line as uc-pxx.id=TOKEN
 # docs/boot.md "The boot image" tells why.
 #
 # Usage:
@@ -18,14 +19,16 @@
 #   --resource a Rockchip resource (RSCE) with the device tree for U-Boot. The
 #              file derives from vendor files and is not part of this
 #              repository. kernel/mkresource.py packs one from a device tree
-#   --board    the build token, up to 15 characters. The initramfs in the Image
-#              has the same string in /etc/uc-pxx-build-id. The boot-marking
-#              hook compares them (docs/boot-control.md)
+#   --board    the build token, up to 15 characters (letters, digits, . _ -).
+#              The script adds " uc-pxx.id=TOKEN" to /chosen/bootargs, so the
+#              running kernel has the token on its command line. The hook
+#              compares it with the boot_a header (docs/boot-control.md)
 #   --dest     where the stub copies the Linux Image (default 0x4000000, 2 MiB
 #              aligned)
 #
 # Tools: aarch64-linux-gnu-gcc, -ld and -objcopy (CROSS_COMPILE changes the
-# prefix), mkbootimg (ci/install-mkbootimg.sh), fdtget (device-tree-compiler),
+# prefix), mkbootimg (ci/install-mkbootimg.sh), fdtget and fdtput
+# (device-tree-compiler),
 # gzip, od, cmp, sha256sum. The script makes no file except OUT.
 #
 # This script does not flash anything. Never write the result to a partition
@@ -33,7 +36,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 CROSS=${CROSS_COMPILE:-aarch64-linux-gnu-}
-usage() { sed -n '11,25p' "$0" >&2; exit 2; }
+usage() { sed -n '12,27p' "$0" >&2; exit 2; }
 
 RES= BOARD= DEST=0x4000000
 while [ $# -gt 0 ]; do
@@ -53,9 +56,10 @@ LINUX=$1 DTB=$2 OUT=$3
 for f in "$LINUX" "$DTB" "$RES"; do
 	[ -f "$f" ] || { echo "mkimage: no file $f" >&2; exit 1; }
 done
-for t in "${CROSS}gcc" "${CROSS}ld" "${CROSS}objcopy" mkbootimg fdtget gzip od cmp; do
+for t in "${CROSS}gcc" "${CROSS}ld" "${CROSS}objcopy" mkbootimg fdtget fdtput gzip od cmp; do
 	command -v "$t" >/dev/null || { echo "mkimage: $t is not installed" >&2; exit 1; }
 done
+case $BOARD in *[!A-Za-z0-9._-]*) echo "mkimage: --board may have only letters, digits, . _ -" >&2; exit 1;; esac
 [ ${#BOARD} -le 15 ] || { echo "mkimage: --board is longer than 15 characters" >&2; exit 1; }
 
 PAGE=2048
@@ -87,10 +91,17 @@ LIS=$(od -An -tu8 -j16 -N8 "$LINUX" | tr -d ' ')
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+# The running kernel must learn its token from the image that it runs, never
+# from the root file system. So add the token to the command line in the
+# device tree that the shim embeds. U-Boot does not change it.
+ARGS=$(fdtget "$DTB" /chosen bootargs)
+case " $ARGS " in *" uc-pxx.id="*) echo "mkimage: $DTB already has uc-pxx.id on its command line" >&2; exit 1;; esac
+cp "$DTB" "$tmp/shim.dtb"
+fdtput -t s "$tmp/shim.dtb" /chosen bootargs "$ARGS uc-pxx.id=$BOARD"
 gzip -9n < /dev/null > "$tmp/ramdisk.gz"
 
 "${CROSS}gcc" -c -DIMAGE_SIZE=$((STUB_SIZE + LIS)) -DLINUX_FILE_SIZE="$LFS" -DLINUX_DEST="$DEST" \
-	-DDTB_FILE="\"$DTB\"" -DLINUX_IMAGE="\"$LINUX\"" -o "$tmp/shim.o" "$HERE/bootloader/shim.S"
+	-DDTB_FILE="\"$tmp/shim.dtb\"" -DLINUX_IMAGE="\"$LINUX\"" -o "$tmp/shim.o" "$HERE/bootloader/shim.S"
 "${CROSS}ld" -Ttext=0 -o "$tmp/shim.elf" "$tmp/shim.o"
 "${CROSS}objcopy" -O binary "$tmp/shim.elf" "$tmp/shim.bin"
 [ "$(stat -c %s "$tmp/shim.bin")" -eq $((STUB_SIZE + LFS)) ] ||
