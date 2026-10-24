@@ -23,8 +23,18 @@
 #               the image (default: rootfs/authorized_keys if it exists, never
 #               committed)
 #   RTL8363_INIT  the static aarch64 rtl8363-init (tools/rtl8363-init/build.sh).
-#               "initramfs" puts it into the rescue. The binary links with the
-#               Realtek SDK and is not part of this repository.
+#               "initramfs" puts it into the rescue. The DEV mode puts it into
+#               the rootfs. The binary links with the Realtek SDK and is not
+#               part of this repository.
+#   UC_PXX_DEV_OVERLAY  TEST ONLY. 1 builds the rootfs without the uc-pxx
+#               packages, which do not exist yet (docs/rootfs.md "Test build
+#               without the uc-pxx packages"). The image then gets the Alpine
+#               packages, the common packages of dev/common-packages.list, the
+#               files of rootfs/overlay and packages/uc-pxx-leds/root,
+#               UC_PXX_BOOTCTL and RTL8363_INIT. Never publish such an image.
+#   UC_PXX_BOOTCTL  DEV mode: the static aarch64 uc-pxx-bootctl
+#               (tools/uc-pxx-bootctl/build.sh). Its sha256 must be the
+#               reviewed one (docs/boot-control.md), or the build stops.
 #   PROFILE     what the rootfs holds (default ha): console (text login on the
 #               panel screen and SSH), kiosk (console plus the browser kiosk) or
 #               ha (kiosk plus the Home Assistant layer). profiles/*.list name
@@ -172,7 +182,8 @@ modules() {
 	echo "staged module trees: $(ls "$MODULES/lib/modules" | tr '\n' ' ')"
 }
 
-# Single input files of the initramfs, mounted read only
+# Test-only inputs of the DEV mode and the initramfs: single files, mounted
+# read only
 in_file() {
 	local name=$1 path=$2
 	[ -n "$path" ] || return 0
@@ -205,6 +216,14 @@ rootfs() {
 	if [ -s "$AUTHORIZED_KEYS" ]; then dargs+=(-v "$(readlink -f "$AUTHORIZED_KEYS"):/in/authorized_keys:ro" -e AUTHORIZED_KEYS=/in/authorized_keys); fi
 	[ -d "$MODULES" ] && dargs+=(-v "$MODULES:/modules:ro")
 	dargs+=(-v "$(cd "$TSX_APK_LOCAL" && pwd):/aports:ro" -e TSX_APK_LOCAL=/aports)
+	if [ "${UC_PXX_DEV_OVERLAY:-}" = 1 ]; then
+		echo "WARNING: UC_PXX_DEV_OVERLAY=1: TEST BUILD without the uc-pxx packages. Never publish this image."
+		[ -n "${UC_PXX_BOOTCTL:-}" ] || { echo "UC_PXX_DEV_OVERLAY=1 needs UC_PXX_BOOTCTL"; exit 1; }
+		[ -n "${RTL8363_INIT:-}" ] || { echo "UC_PXX_DEV_OVERLAY=1 needs RTL8363_INIT"; exit 1; }
+		dargs+=(-e UC_PXX_DEV_OVERLAY=1)
+		in_file UC_PXX_BOOTCTL "$UC_PXX_BOOTCTL"
+		in_file RTL8363_INIT "$RTL8363_INIT"
+	fi
 	mkdir -p "$HOME/.cache/uc-pxx-pip"
 	docker run "${dargs[@]}" -v "$HOME/.cache/uc-pxx-pip:/build/pip" \
 		-e KVER="$KVER" -e IMG_MB="${IMG_MB:-}" -e IMG_HEADROOM_MB="${IMG_HEADROOM_MB:-256}" \

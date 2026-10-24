@@ -25,6 +25,9 @@
 #   PROFILE     console, kiosk or ha (default ha). It decides what the image
 #               holds. profiles/*.list, profile.sh and docs/rootfs.md
 #               "Profiles" say what each profile has.
+#   UC_PXX_DEV_OVERLAY  TEST ONLY. 1 builds without the uc-pxx packages
+#               (docs/rootfs.md "Test build without the uc-pxx packages"). It
+#               needs UC_PXX_BOOTCTL and RTL8363_INIT (build-rootfs.sh).
 # The script compiles nothing. It copies only the files of profiles/image.list
 # (fstab, inittab, the profile marker). The packages own all other files
 # (docs/rootfs.md "Build the image").
@@ -44,7 +47,20 @@ sh "$HERE/profile.sh" includes "$PROFILE" >/dev/null || exit 1
 has() { sh "$HERE/profile.sh" has "$PROFILE" "$1" "$2"; }
 log "profile $PROFILE"
 [ -n "${TSX_APK_LOCAL:-}" ] || { echo "TSX_APK_LOCAL is required (a tsx-aports published tree with $ALPINE/common and $ALPINE/uc-pxx, see rootfs/fetch-apk-tree.sh)"; exit 1; }
-log "build from packages: uc-pxx-$PROFILE"
+DEV=${UC_PXX_DEV_OVERLAY:-}
+# The reviewed uc-pxx-bootctl binary (docs/boot-control.md). The DEV mode
+# installs only this exact file.
+BOOTCTL_SHA256=38fea6d32412e7977ebc5845b138dc1c8c2df8555dae0b64b47f8a851b45e2d7
+if [ "$DEV" = 1 ]; then
+	log "TEST BUILD (UC_PXX_DEV_OVERLAY=1): no uc-pxx packages, the repository files instead. Never publish this image."
+	[ -r "${UC_PXX_BOOTCTL:-}" ] || { echo "UC_PXX_DEV_OVERLAY=1: no UC_PXX_BOOTCTL"; exit 1; }
+	[ -r "${RTL8363_INIT:-}" ] || { echo "UC_PXX_DEV_OVERLAY=1: no RTL8363_INIT"; exit 1; }
+	sum=$(sha256sum "$UC_PXX_BOOTCTL" | cut -d' ' -f1)
+	[ "$sum" = "$BOOTCTL_SHA256" ] || { echo "ERROR: UC_PXX_BOOTCTL has sha256 $sum, the reviewed binary is $BOOTCTL_SHA256"; exit 1; }
+	log "uc-pxx-bootctl: sha256 $sum (the reviewed binary)"
+else
+	log "build from packages: uc-pxx-$PROFILE"
+fi
 
 printf '%s/%s/main\n%s/%s/community\n' "$MIRROR" "$ALPINE" "$MIRROR" "$ALPINE" > /etc/apk/repositories
 apk update -q
@@ -56,12 +72,16 @@ apk update -q
 # published tree (TSX_APK_LOCAL): the build never depends on TSX_APK_URL being
 # reachable.
 TSX_APK_URL=${TSX_APK_URL:-https://tsx-aports.unexceptional.net}; TSX_APK_URL=${TSX_APK_URL%/}
-for c in common uc-pxx; do
+# The DEV mode uses only the common category.
+TSX_CATS="common uc-pxx"; [ "$DEV" = 1 ] && TSX_CATS=common
+for c in $TSX_CATS; do
 	[ -r "$TSX_APK_LOCAL/$ALPINE/$c/$ARCH/APKINDEX.tar.gz" ] || { echo "TSX_APK_LOCAL: no $ALPINE/$c/$ARCH/APKINDEX.tar.gz under $TSX_APK_LOCAL"; exit 1; }
 done
 # The board package and the meta packages are not in the public tree. Stop here
 # with a clear message when the tree lacks one of them.
-sh "$HERE/check-apk-tree.sh" "$TSX_APK_LOCAL" "$PROFILE" || { echo "ERROR: the tree $TSX_APK_LOCAL lacks packages that the $PROFILE image needs (docs/rootfs.md \"Where the packages come from\")"; exit 1; }
+if [ "$DEV" != 1 ]; then
+	sh "$HERE/check-apk-tree.sh" "$TSX_APK_LOCAL" "$PROFILE" || { echo "ERROR: the tree $TSX_APK_LOCAL lacks packages that the $PROFILE image needs (docs/rootfs.md \"Where the packages come from\")"; exit 1; }
+fi
 apk add -q --no-cache e2fsprogs tar gzip zstd >/dev/null
 
 log "install packages ($ALPINE, $ARCH)"
@@ -74,14 +94,23 @@ cp -a /etc/apk/keys/. $R/etc/apk/keys/
 PKGS=$(sh "$HERE/profile.sh" packages "$PROFILE" "$HERE/packages.txt" | tr '\n' ' ')
 TSXPKGS=$(sh "$HERE/profile.sh" packages "$PROFILE" "$HERE/packages-tsx.txt" | tr '\n' ' ')
 # The profile meta package pulls the packages that hold the panel software.
-TSXPKGS="$TSXPKGS uc-pxx-$PROFILE"
+if [ "$DEV" = 1 ]; then
+	# no uc-pxx packages: the common packages that the meta package will pull
+	TSXPKGS=$(printf '%s\n' $TSXPKGS | grep -v '^uc-pxx-' | tr '\n' ' ')
+	for l in $(sh "$HERE/profile.sh" includes "$PROFILE"); do
+		TSXPKGS="$TSXPKGS $(awk -v p="$l" '$1 == p { print $2 }' "$HERE/dev/common-packages.list" | tr '\n' ' ')"
+	done
+else
+	TSXPKGS="$TSXPKGS uc-pxx-$PROFILE"
+fi
 log "tsx-aports packages from $TSX_APK_LOCAL: $TSXPKGS"
 # uc-pxx-chromium (if listed) provides chromium, so Alpine chromium stays out
 if printf '%s\n' $TSXPKGS | grep -qx uc-pxx-chromium; then
 	PKGS=$(sh "$HERE/profile.sh" packages "$PROFILE" "$HERE/packages.txt" | grep -vx chromium | tr '\n' ' ')
 fi
 PKGS="$PKGS $TSXPKGS"
-printf '%s/%s/common\n%s/%s/uc-pxx\n' "$TSX_APK_LOCAL" "$ALPINE" "$TSX_APK_LOCAL" "$ALPINE" > /build/repositories
+: > /build/repositories
+for c in $TSX_CATS; do printf '%s/%s/%s\n' "$TSX_APK_LOCAL" "$ALPINE" "$c" >> /build/repositories; done
 cat /etc/apk/repositories >> /build/repositories
 apk add --root $R --initdb --no-cache -q --keys-dir /etc/apk/keys \
 	--repositories-file /build/repositories $PKGS
@@ -95,6 +124,20 @@ cp -a /etc/apk/keys $R/etc/apk/
 	echo "$TSX_APK_URL/$ALPINE/uc-pxx"
 	cat /etc/apk/repositories
 } > $R/etc/apk/repositories
+
+if [ "$DEV" = 1 ]; then
+	# TEST ONLY: the files that the packages uc-pxx-board, uc-pxx-leds and
+	# uc-pxx-boot-tools will own, straight from the repository
+	log "DEV: rootfs/overlay, packages/uc-pxx-leds/root, uc-pxx-bootctl, rtl8363-init"
+	for d in "$HERE/overlay" "$TOP/packages/uc-pxx-leds/root"; do
+		(cd "$d" && tar --owner=0 --group=0 --numeric-owner -cf - .) | tar -C $R -xpf -
+	done
+	install -m 755 -o 0 -g 0 "$UC_PXX_BOOTCTL" $R/usr/sbin/uc-pxx-bootctl
+	install -m 755 -o 0 -g 0 "$RTL8363_INIT" $R/usr/sbin/rtl8363-init
+	[ "$(sha256sum $R/usr/sbin/uc-pxx-bootctl | cut -d' ' -f1)" = "$BOOTCTL_SHA256" ] || { echo "ERROR: uc-pxx-bootctl changed in the copy"; exit 1; }
+	mkdir -p $R/etc/tsx
+	echo "TEST BUILD (UC_PXX_DEV_OVERLAY=1), not from the uc-pxx packages. Do not publish." > $R/etc/tsx/dev-overlay
+fi
 
 log "image files ($PROFILE)"
 # The packages own the files of the panel software. The image keeps only its
@@ -147,6 +190,13 @@ log "users, services"
 # are in profiles/*.list. The chroot shell reads them from its environment.
 TSX_SVC_BOOT=$(sh "$HERE/profile.sh" entries "$PROFILE" svc | awk '$1 == "boot" { print $2 }' | tr '\n' ' ')
 TSX_SVC_DEFAULT=$(sh "$HERE/profile.sh" entries "$PROFILE" svc | awk '$1 == "default" { print $2 }' | tr '\n' ' ')
+if [ "$DEV" = 1 ]; then
+	# The published tsx-autoupdate has no board hook. An update must arm slot A
+	# first (uc-pxx-arm-slot, docs/boot-control.md "The update rule"). So a
+	# DEV image does not start it.
+	TSX_SVC_DEFAULT=$(printf '%s\n' $TSX_SVC_DEFAULT | grep -vx tsx-autoupdate | tr '\n' ' ')
+	log "DEV: tsx-autoupdate is not started (no board hook in the published common packages)"
+fi
 TSX_USERS=$(sh "$HERE/profile.sh" entries "$PROFILE" user | tr '\n' ' ')
 case "$PROFILE" in console) TSX_HOSTNAME=tsx-console;; *) TSX_HOSTNAME=tsx-kiosk;; esac
 export TSX_SVC_BOOT TSX_SVC_DEFAULT TSX_USERS TSX_HOSTNAME
@@ -256,8 +306,17 @@ fi
 # The kernel package must carry the pinned kernel (kernel/KERNEL_REV.lts). An
 # old package in the local tree would put a stale /boot/uc-pxx-lts.img in the
 # image.
-log "check the kernel package against kernel/KERNEL_REV.lts"
-sh "$HERE/check-kernel-pins.sh" "$R" "$TOP/kernel" || { echo "ERROR: the kernel package in $TSX_APK_LOCAL does not match the kernel pin"; exit 1; }
+if [ "$DEV" = 1 ]; then
+	# no kernel package: the boot image comes from the kernel build directly
+	short=$(grep -v '^#' "$TOP/kernel/KERNEL_REV.lts" | head -n 1 | cut -c1-12)
+	for kv in $(ls $R/lib/modules 2>/dev/null); do
+		case $kv in *-g"$short") ;; *) echo "ERROR: the module tree $kv is not from the pinned kernel $short"; exit 1;; esac
+	done
+	log "DEV: no kernel package, module trees: $(ls $R/lib/modules 2>/dev/null | tr '\n' ' ')"
+else
+	log "check the kernel package against kernel/KERNEL_REV.lts"
+	sh "$HERE/check-kernel-pins.sh" "$R" "$TOP/kernel" || { echo "ERROR: the kernel package in $TSX_APK_LOCAL does not match the kernel pin"; exit 1; }
+fi
 
 log "manifest and sizes"
 mkdir -p "$OUT"
@@ -271,7 +330,8 @@ apk info --root $R -v 2>/dev/null | sort > "$OUT/rootfs.manifest"
 	echo "largest directories:"
 	du -xm -d 3 $R/usr $R/lib $R/opt 2>/dev/null | sort -rn | head -15 | sed "s|$R||"
 	echo "profile: $PROFILE"
-	echo "image source: packages (uc-pxx-$PROFILE)"
+	if [ "$DEV" = 1 ]; then echo "image source: TEST BUILD (UC_PXX_DEV_OVERLAY=1), common packages and the repository files"
+	else echo "image source: packages (uc-pxx-$PROFILE)"; fi
 	echo "root password: $ROOT_PW_RESULT"
 	echo "tsx-aports: installed from a local tree: $TSXPKGS"
 	echo "tsx-aports: panel repository URL $TSX_APK_URL/$ALPINE/{common,uc-pxx}"

@@ -45,6 +45,37 @@ The initramfs grows the file system to fill the partition at the first boot.
 The initramfs is built into the kernel Image. `rootfs/build-rootfs.sh
 initramfs` makes it ([boot.md](boot.md) "The boot initramfs").
 
+## Test build without the uc-pxx packages
+
+The packages of the category `uc-pxx` do not exist yet. A test build can use
+the files of this repository instead. Never publish such an image.
+
+```sh
+UC_PXX_DEV_OVERLAY=1 PROFILE=console TSX_APK_LOCAL=$PWD/apk-tree \
+  UC_PXX_BOOTCTL=uc-pxx-bootctl-aarch64 RTL8363_INIT=rtl8363-init \
+  AUTHORIZED_KEYS=my-keys.pub rootfs/build-rootfs.sh rootfs
+```
+
+With `UC_PXX_DEV_OVERLAY=1` the build:
+
+- needs only the category `common` in the apk tree, and skips
+  `rootfs/check-apk-tree.sh`;
+- installs the Alpine packages of the profile, `tsx-keys` and the common
+  packages of `rootfs/dev/common-packages.list` (what the profile meta
+  package will pull). It installs no `uc-pxx-*` package;
+- copies `rootfs/overlay` and `packages/uc-pxx-leds/root` into the image;
+- installs `UC_PXX_BOOTCTL` as `/usr/sbin/uc-pxx-bootctl`. The build stops
+  if its sha256 is not the reviewed one ([boot-control.md](boot-control.md));
+- installs `RTL8363_INIT` as `/usr/sbin/rtl8363-init`;
+- does not start `tsx-autoupdate`. The published common packages have no
+  board hook, and an update must arm slot A first;
+- skips `rootfs/check-kernel-pins.sh`, because there is no kernel package.
+  A staged module tree must come from the pinned kernel;
+- writes the marker `/etc/tsx/dev-overlay`.
+
+The boot image does not come from the image. Make it with
+`kernel/mkimage.sh` from the same kernel build.
+
 ## Where the packages come from
 
 The apk repository is `tsx-aports`. The UC-P10 uses two categories: `common`
