@@ -148,7 +148,30 @@ All services of this family start with `uc-pxx-`.
 | `uc-pxx-switch` | boot | Sets the MAC address and starts the Ethernet switch. Not tested in this form |
 | `uc-pxx-audio` | default | Done. Mixer defaults and volume |
 | `uc-pxx-boot-ok` | default | Starts the boot-marking hook. See [boot-control.md](boot-control.md) |
+| `uc-pxx-status-led` | default | Done. Blue heartbeat on the status LED until slot A is marked good, then solid green. See "Status LED" |
 | `uc-pxx-als` | default | Stub. The light sensor feed is not written |
+
+### Status LED
+
+`uc-pxx-status-led` shows the boot state on the RGB status LED. It uses the
+LED class devices `green` and `blue` of `/sys/class/leds`.
+
+| State of slot A | Status LED |
+|---|---|
+| Not marked successful (the boot is new or an update armed it) | Blue, trigger `heartbeat` |
+| Marked successful | Green on, blue off |
+
+The program reads the state with `uc-pxx-bootctl status` every 10 seconds. The
+command only reads the A/B sector. It writes one line to the kernel log each
+time. The program stops when slot A is successful, or after 10 minutes. If
+slot A is still not successful then, blue keeps the heartbeat.
+
+The program never writes the `red` LED. `uc-pxx-arm-slot` and the
+boot-marking hook light red when the A/B state is unknown
+([boot-control.md](boot-control.md)). Nothing in the program clears it.
+
+After `uc-pxx-arm-slot` armed slot A in a running system, the LED stays as it
+is until the next boot. The next boot starts the program again.
 
 ### Firmware
 
@@ -219,6 +242,7 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 | `rootfs/tests/test-board.sh` | The board values, the board hook, the MAC address, the model, the key codes and the key LEDs |
 | `rootfs/tests/test-audio.sh` | `uc-pxx-audio` with a stub `amixer` |
 | `rootfs/tests/test-firmware.sh` | `uc-pxx-firmware` with a made-up vendor folder |
+| `rootfs/tests/test-status-led.sh` | `uc-pxx-status-led` with fake LEDs and a stub for `uc-pxx-bootctl` |
 | `rootfs/tests/test-switch.sh` | `uc-pxx-switch` with stub tools |
 | `rootfs/tests/test-watchdog.sh` | The timeout checks of `uc-pxx-watchdog` |
 | `rootfs/tests/test-kernel-pins.sh` | `rootfs/check-kernel-pins.sh` |

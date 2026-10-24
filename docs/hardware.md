@@ -57,6 +57,11 @@ The device tree lists the codes in the order of the T15 key index: 113, 115,
 114, 202, 149, 148. The RGB status LED (`green`, `red`, `blue`) is in the
 centre at the bottom.
 
+The RGB status LED shows the boot state ([rootfs.md](rootfs.md) "Status
+LED"). Blue with the heartbeat trigger means that slot A is not marked
+successful yet. Solid green means that it is. Solid red means that the A/B
+state is unknown and nobody may reboot ([boot-control.md](boot-control.md)).
+
 The file `rootfs/overlay/etc/tsx/buttons-board.conf` has the key names, the
 codes and the LEDs for `tsx-buttons`. The key LEDs are plain on/off GPIO LEDs.
 The file sets `LED_MODE=onoff` and names the four LEDs with `LED_KEY_1` to
