@@ -1,0 +1,13 @@
+/results/
+
+# Crestron firmware and vendor files never go into the repo
+*.puf
+*.cnt
+*.psr
+*.pcdfw
+
+# vendor-derived inputs of the boot image (kernel/mkimage.sh takes their paths)
+resource*.img
+
+# the published apk tree that the CI jobs fetch (rootfs/fetch-apk-tree.sh)
+/apk-tree/
