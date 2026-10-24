@@ -123,6 +123,32 @@ The function `tsx_board_pre_update` is the board hook of `tsx-autoupdate`. It
 runs `uc-pxx-arm-slot` before `apk upgrade` changes the system
 ([boot-control.md](boot-control.md) "The update rule").
 
+### Hardware facts and panel-board.d
+
+`tsx-hw detect` runs at boot, from the common script of `tsx-config`. It
+writes two files in `/run/tsx`:
+
+- `hw.conf`, the facts of the panel. `tsx-config`, `tsx-setupd`, `tsx-bt`,
+  `tsx-voice` and the ESPHome device read it.
+- `panel-board.conf`, the board values. `/etc/tsx/panel-board.conf` is a link
+  to it. The program builds it from `/etc/tsx/panel-board.d/default.conf`, then
+  `UC-P10.conf` or `UC-P8.conf` (the model of the device tree), then
+  `local.conf`. A key in a later file replaces the key of an earlier file.
+
+| Key | Value | Source |
+|---|---|---|
+| `ORIENTATION_HW` | `landscape` | Fixed. The UC-P10 is a landscape device |
+| `MIC`, `BT`, `WIFI` | `yes` | Fixed. Parts of the board |
+| `CAMERA` | `no` | Fixed. The camera is not fitted |
+| `LEDBAR` | `no` | Fixed. The USB-C port is a device port, so no LED bar can be attached |
+| `PRESENCE` | `yes` or `no` | An input device `gpio-keys` with the switch bit 11 (`SW_FRONT_PROXIMITY`) |
+| `LIGHT` | `yes` or `no` | An IIO device named `jsa1212` |
+
+`default.conf` holds the backlight range and the values of the light sensor.
+The backlight has five PWM levels in the device tree, so the device has the
+steps 0 to 4. `BACKLIGHT_MAX=4` and `BACKLIGHT_MIN=1` follow from that.
+Nobody has tuned these values on the glass.
+
 ### MAC address
 
 The MAC address of eth0 is in the `cfg` partition, in bytes 6 to 11. The
@@ -240,6 +266,7 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 |---|---|
 | `rootfs/tests/test-profiles.sh` | The package, service and image file lists of the profiles |
 | `rootfs/tests/test-board.sh` | The board values, the board hook, the MAC address, the model, the key codes and the key LEDs |
+| `rootfs/tests/test-hw.sh` | `tsx-hw` with a made-up `/sys`: the facts and the layers of `panel-board.d` |
 | `rootfs/tests/test-audio.sh` | `uc-pxx-audio` with a stub `amixer` |
 | `rootfs/tests/test-firmware.sh` | `uc-pxx-firmware` with a made-up vendor folder |
 | `rootfs/tests/test-status-led.sh` | `uc-pxx-status-led` with fake LEDs and a stub for `uc-pxx-bootctl` |
@@ -249,8 +276,8 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 
 ## TODO
 
-- `tsx-hw` and `panel-board.d/default.conf` (backlight and sensor values).
-  `tsx-config` warns and goes on without them.
+- Tune the backlight steps and `ALS_SCALE` in `panel-board.d/default.conf` on
+  the glass.
 - A data volume check for the first boot (`tsx-data` of common).
 - The light sensor feed (`uc-pxx-als`).
 - Chromium flags for panfrost (`TSX_BROWSER_GL_FLAGS`).

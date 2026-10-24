@@ -1,0 +1,145 @@
+#!/bin/sh
+# tsx-hw: the hardware facts of this panel, in one file. The common init
+# script of tsx-config runs `tsx-hw detect` at boot, before `tsx-config apply`.
+# The name is the one that tsx-linux-common calls (docs/layout.md).
+#
+#   tsx-hw detect   write the board values and the facts file (root, at boot)
+#   tsx-hw board    write only $TSX_RUN_DIR/panel-board.conf
+#   tsx-hw get KEY  print one value of the facts file
+#   tsx-hw show     print the facts file
+#
+# The facts file is $TSX_RUN_DIR/hw.conf (default /run/tsx/hw.conf), mode
+# 644. It has these lines:
+#   ORIENTATION_HW=landscape  the UC-P10 is a landscape device. The panel
+#                       shows the screen rotated by 270 degrees. The key is
+#                       the default of ORIENTATION in tsx-config apply.
+#   MIC=yes             the speakerphone microphones and the handset microphone
+#   BT=yes              the BCM4345C5 controller of the AP6256 module
+#   WIFI=yes            the BCM43456 of the AP6256 module
+#   CAMERA=no           the camera is not fitted and has no driver
+#   PRESENCE=yes|no     the PIR switch: an input device "gpio-keys" that
+#                       reports SW_FRONT_PROXIMITY (code 11)
+#   LIGHT=yes|no        the ambient light sensor: an IIO device "jsa1212"
+#   LEDBAR=no           the USB-C port is a device port. No USB LED bar can
+#                       be attached
+#   REASON=TEXT         why a part is missing (empty when none is)
+# MIC, BT and WIFI are parts of the board. They do not depend on a driver or
+# on firmware that loads later, so they are fixed. PRESENCE and LIGHT are
+# built-in drivers, so they exist when the services start.
+#
+# The board values: /etc/tsx/panel-board.conf is a link to
+# $TSX_RUN_DIR/panel-board.conf. tsx-hw writes that file from these files of
+# TSX_BOARD_D (default /etc/tsx/panel-board.d), in this order: default.conf,
+# <model>.conf and local.conf. <model> is the model of the device tree
+# (UC-P10 or UC-P8, from tsx_board_dt_model). A key in a later file replaces
+# the key of an earlier file. A file that is missing is skipped.
+#
+# Test hooks: TSX_RUN_DIR, TSX_SYS (the folder /sys), TSX_BOARD_D and
+# TSX_BOARD_CONF (the board file).
+set -u
+RUN=${TSX_RUN_DIR:-/run/tsx}
+SYS=${TSX_SYS:-/sys}
+BOARD_D=${TSX_BOARD_D:-/etc/tsx/panel-board.d}
+CONF=$RUN/hw.conf
+
+# has_light: an IIO device named jsa1212
+has_light() {
+	for d in "$SYS"/bus/iio/devices/iio:device*; do
+		[ -r "$d/name" ] || continue
+		read -r n < "$d/name"
+		[ "$n" = jsa1212 ] && return 0
+	done
+	return 1
+}
+
+# has_pir: an input device named gpio-keys whose switch bits (capabilities/sw)
+# include bit 11, SW_FRONT_PROXIMITY. The file is a hex word list. The last
+# word holds bits 0 to 31 on a 32 bit kernel and on a 64 bit kernel.
+has_pir() {
+	for d in "$SYS"/class/input/input*; do
+		[ -r "$d/name" ] || continue
+		read -r n < "$d/name"
+		[ "$n" = gpio-keys ] || continue
+		[ -r "$d/capabilities/sw" ] || continue
+		read -r sw < "$d/capabilities/sw"
+		last=${sw##* }
+		case $last in ''|*[!0-9a-fA-F]*) continue;; esac
+		[ $(( 0x$last & 0x800 )) -ne 0 ] && return 0
+	done
+	return 1
+}
+
+yn() { if "$@"; then echo yes; else echo no; fi; }
+
+facts() {
+	presence=$(yn has_pir); light=$(yn has_light)
+	echo "ORIENTATION_HW=landscape"
+	echo "MIC=yes"
+	echo "BT=yes"
+	echo "WIFI=yes"
+	echo "CAMERA=no"
+	echo "PRESENCE=$presence"
+	echo "LIGHT=$light"
+	echo "LEDBAR=no"
+	miss=
+	[ "$presence" = no ] && miss="$miss, no PIR switch"
+	[ "$light" = no ] && miss="$miss, no light sensor"
+	echo "REASON=${miss#, }"
+}
+
+# board_conf OUT: write the board values to OUT (the layers of panel-board.d)
+board_conf() {
+	. "${TSX_BOARD_CONF:-/usr/local/lib/tsx/board.sh}"
+	model=$(tsx_board_dt_model | tr -c 'A-Za-z0-9._\n-' '_')
+	: > "$1" || return 1
+	for f in "$BOARD_D/default.conf" ${model:+"$BOARD_D/$model.conf"} "$BOARD_D/local.conf"; do
+		[ -r "$f" ] || continue
+		# keep the lines so far, minus the keys that this file sets, then add the file
+		awk 'NR == FNR { if (match($0, /^[ \t]*[A-Za-z_][A-Za-z0-9_]*=/)) {
+				k = substr($0, 1, RLENGTH - 1); gsub(/[ \t]/, "", k); seen[k] = 1 }
+			next }
+			{ k = ""; if (match($0, /^[ \t]*[A-Za-z_][A-Za-z0-9_]*=/)) {
+				k = substr($0, 1, RLENGTH - 1); gsub(/[ \t]/, "", k) }
+			  if (k == "" || !(k in seen)) print }' "$f" "$1" > "$1.new" || return 1
+		cat "$f" >> "$1.new" && mv "$1.new" "$1" || return 1
+	done
+}
+
+# board_write: write $RUN/panel-board.conf. It never fails the boot: the
+# readers use the defaults of kiosk.conf when the file is missing.
+board_write() {
+	mkdir -p "$RUN" || return 1
+	if board_conf "$RUN/panel-board.conf.tmp.$$" && chmod 644 "$RUN/panel-board.conf.tmp.$$" &&
+		mv "$RUN/panel-board.conf.tmp.$$" "$RUN/panel-board.conf"; then
+		return 0
+	fi
+	rm -f "$RUN/panel-board.conf.tmp.$$" "$RUN/panel-board.conf.tmp.$$.new"
+	echo "tsx-hw: cannot write $RUN/panel-board.conf" >&2
+	return 1
+}
+
+case "${1:-}" in
+board)
+	board_write || exit 1
+	;;
+detect)
+	mkdir -p "$RUN" || exit 1
+	board_write || true
+	facts > "$CONF.tmp.$$" && chmod 644 "$CONF.tmp.$$" && mv "$CONF.tmp.$$" "$CONF" || {
+		rm -f "$CONF.tmp.$$"; echo "tsx-hw: cannot write $CONF" >&2; exit 1; }
+	msg=$(grep -v '^REASON=' "$CONF" | tr '\n' ' ' | sed 's/ $//')
+	echo "tsx-hw: $msg"
+	logger -t tsx-hw "$msg" 2>/dev/null || true
+	;;
+get)
+	[ $# = 2 ] || { echo "usage: tsx-hw get KEY" >&2; exit 2; }
+	case "$2" in ''|*[!A-Z_]*) echo "tsx-hw: bad key name" >&2; exit 2;; esac
+	[ -r "$CONF" ] || { echo "tsx-hw: no $CONF (run tsx-hw detect as root)" >&2; exit 1; }
+	grep -q "^$2=" "$CONF" || exit 1
+	sed -n "s/^$2=//p" "$CONF" | tail -n 1
+	;;
+show)
+	cat "$CONF" 2>/dev/null || { echo "tsx-hw: no $CONF (run tsx-hw detect as root)" >&2; exit 1; }
+	;;
+*) sed -n '2,8p' "$0" >&2; exit 2;;
+esac
