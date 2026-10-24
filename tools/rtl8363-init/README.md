@@ -6,7 +6,7 @@ The service `uc-pxx-switch` runs it before eth0 comes up.
 The tool replays the init of the stock kernel: it starts the switch, sets the
 external port 0 to RGMII with a fixed link of 1000 Mbit/s full duplex, sets
 the RGMII delay and enables the PHYs. It talks to the switch through a sysfs
-file of the kernel driver `ucp10-rtl8364b-smi` (default) or through MII
+file of the kernel driver `realtek-rtl8364b-smi` (default) or through MII
 ioctls on an up interface (option `-m`).
 
 ## License

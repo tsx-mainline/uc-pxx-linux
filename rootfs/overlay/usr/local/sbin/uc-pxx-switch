@@ -10,7 +10,7 @@
 #      board.sh). Without a valid address, eth0 keeps the address of the
 #      kernel.
 #   2. Wait for the management interface of the switch driver
-#      (/sys/bus/mdio_bus/drivers/ucp10-rtl8364b-smi/*/smi).
+#      (/sys/bus/mdio_bus/drivers/realtek-rtl8364b-smi/*/smi).
 #   3. Run "rtl8363-init init". The tool puts the switch in RGMII mode with a
 #      fixed link of 1000 Mbit/s, full duplex, and enables the PHYs.
 #
@@ -26,7 +26,7 @@ set -eu
 IF=${UC_PXX_IF:-eth0}
 WAIT=${UC_PXX_SMI_WAIT:-10}
 TOOL=${RTL8363_INIT:-rtl8363-init}
-SMI_GLOB=${UC_PXX_SMI_GLOB:-/sys/bus/mdio_bus/drivers/ucp10-rtl8364b-smi/*/smi}
+SMI_GLOB=${UC_PXX_SMI_GLOB:-/sys/bus/mdio_bus/drivers/realtek-rtl8364b-smi/*/smi}
 SYSNET=${UC_PXX_SYSNET:-/sys/class/net}
 say() { echo "uc-pxx-switch: $*"; }
 

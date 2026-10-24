@@ -9,7 +9,7 @@
  *   read:  w(29,31,0x000E) w(29,23,reg) w(29,21,0x0001) r(29,25)
  *
  * Back-ends:
- *  1. sysfs (default): the kernel driver ucp10-rtl8364b-smi does the protocol;
+ *  1. sysfs (default): the kernel driver realtek-rtl8364b-smi does the protocol;
  *     file .../<mdio dev>/smi: write "reg" + read -> value, write "reg val".
  *     Works while eth0 is DOWN, which is required: the MAC DMA reset on
  *     "ip link set eth0 up" needs the RGMII RX clock from the switch.
@@ -33,7 +33,7 @@
 #include "smi.h"
 
 #define SW_MDIO_ADDR	29
-#define SYSFS_GLOB	"/sys/bus/mdio_bus/drivers/ucp10-rtl8364b-smi/*/smi"
+#define SYSFS_GLOB	"/sys/bus/mdio_bus/drivers/realtek-rtl8364b-smi/*/smi"
 
 static int smi_fd = -1;		/* sysfs file */
 static int sock_fd = -1;	/* ioctl back-end */
@@ -59,7 +59,7 @@ int smi_open(const char *ifname, int use_ioctl)
 		globfree(&g);
 		return smi_fd < 0 ? -errno : 0;
 	}
-	fprintf(stderr, "smi: %s not found (driver ucp10-rtl8364b-smi not bound?)\n", SYSFS_GLOB);
+	fprintf(stderr, "smi: %s not found (driver realtek-rtl8364b-smi not bound?)\n", SYSFS_GLOB);
 	return -ENOENT;
 }
 

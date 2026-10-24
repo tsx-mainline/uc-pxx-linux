@@ -34,5 +34,8 @@ grep -q '^tool init' "$T/log" && ok "the switch init still runs" || bad "no swit
 echo 0x1003 > "$T/net/eth0/flags"; : > "$T/log"
 sw TSX_CFG="$T/cfg" 2>&1 | grep -q 'up already' && ok "eth0 up: the script stops" || bad "no message for an up interface"
 [ ! -s "$T/log" ] && ok "eth0 up: nothing runs" || bad "ran with eth0 up: $(cat "$T/log")"
+echo "== the driver name =="
+grep -q 'drivers/realtek-rtl8364b-smi/\*/smi' "$P" && ok "the default path names the driver realtek-rtl8364b-smi" || bad "wrong default SMI path"
+grep -rq 'ucp10-rtl8364b' "$HERE/overlay" "$HERE/../tools/rtl8363-init" && bad "the old driver name is still in use" || ok "no old driver name in the overlay or the tool"
 echo "$N passed, $F failed"
 [ "$F" = 0 ]

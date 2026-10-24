@@ -10,7 +10,7 @@
  *   rtk_port_rgmiiDelayExt_set(EXT_PORT0, 1, 0);
  *   rtk_port_phyEnableAll_set(ENABLED);
  *
- * Default back-end: sysfs file of the ucp10-rtl8364b-smi kernel driver; run this
+ * Default back-end: sysfs file of the realtek-rtl8364b-smi kernel driver; run this
  * while eth0 is still DOWN (the MAC DMA reset needs the switch's RGMII clock).
  * -m: use MII ioctls on an UP eth0 with an attached PHY instead.
  *

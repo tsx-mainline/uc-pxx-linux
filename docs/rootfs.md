@@ -168,6 +168,18 @@ The GMAC connects to an RTL8364B switch. `uc-pxx-switch` sets the MAC address
 of eth0 and runs `rtl8363-init` while eth0 is down. The tool is built from
 `tools/rtl8363-init` and links with the Realtek switch SDK (GPL-2.0).
 
+The tool talks to the kernel driver `realtek-rtl8364b-smi` (compatible
+`realtek,rtl8364b-smi`). The driver makes the file `smi` of the MDIO device:
+
+| Item | Path or text |
+|---|---|
+| Device file | `/sys/bus/mdio_bus/devices/stmmac-0:1d/smi` |
+| Driver folder | `/sys/bus/mdio_bus/drivers/realtek-rtl8364b-smi/` |
+| `dmesg` prefix | `realtek-rtl8364b-smi stmmac-0:1d` |
+
+The device file does not depend on the driver name. The service and the tool
+look in the driver folder (`*/smi`).
+
 ### Audio
 
 `uc-pxx-audio` replaces `tsx-audio` of the xx70. `uc-pxx-audio init` sets the
