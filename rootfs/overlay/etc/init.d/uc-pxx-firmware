@@ -1,0 +1,18 @@
+#!/sbin/openrc-run
+# Copy the firmware of the unit (Wi-Fi and Bluetooth) from its vendor partition
+# into the root file system once (uc-pxx-firmware boot). The repository holds
+# no firmware file.
+description="Firmware of the unit (Wi-Fi and Bluetooth, from the vendor partition)"
+depend() {
+	need localmount
+	after tsx-data
+	before networking
+}
+start() {
+	ebegin "Firmware of the unit"
+	/usr/local/sbin/uc-pxx-firmware boot 2>&1 | while read -r l; do
+		einfo "  $l"; logger -t uc-pxx-firmware "${l#uc-pxx-firmware: }"
+	done
+	# It never fails the boot. A panel without Wi-Fi and Bluetooth firmware still runs.
+	eend 0
+}

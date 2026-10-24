@@ -1,0 +1,24 @@
+# Profile "ha": kiosk plus the Home Assistant layer (tsx-ha): the ESPHome
+# device, MQTT, the voice satellite, the Bluetooth proxy, Sendspin and
+# kiosk-set-token, and the Home Assistant fields of the setup page (the plugin
+# setup.d/ha.py). Format: see console.list.
+
+step lva
+
+pkg mosquitto-clients
+pkg avahi-compat-libdns_sd
+pkg py3-zeroconf
+pkg py3-numpy
+pkg py3-protobuf
+pkg py3-cryptography
+pkg py3-tzlocal
+pkg py3-aiohappyeyeballs
+pkg py3-mpv
+pkg mpv-libs
+pkg sendspin-cli
+pkg tensorflow-lite-c
+
+svc default tsx-sendspin
+svc default tsx-bt
+svc default tsx-esphome
+svc default tsx-mqtt

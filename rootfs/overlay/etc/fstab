@@ -1,0 +1,10 @@
+# <fs>          <mountpoint>  <type>  <opts>                      <dump> <pass>
+# root: system_a (1792 MiB), ext4 label tsxroot. The initramfs checks it and
+# grows it to fill the partition before it mounts it.
+LABEL=tsxroot   /             ext4    rw,noatime,commit=60        0      1
+# data: ext4 label tsxdata (panel.conf, browser profile and logs, see tsx-data).
+# Phase 1: the LVM volume tsx/data over vendor_a and oem_a, activated by
+# uc-pxx-lvm. Phase 2: userdata. nofail: a panel without it still boots, and
+# everything then lives on the root file system.
+LABEL=tsxdata   /data         ext4    rw,noatime,commit=60,nofail 0      0
+tmpfs           /tmp          tmpfs   nosuid,nodev,mode=1777      0      0

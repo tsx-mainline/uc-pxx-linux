@@ -1,0 +1,60 @@
+#!/bin/sh
+# uc-pxx-switch start | status: the MAC address of eth0 and the RTL8364B switch.
+#
+# The GMAC of the RK3399 is wired to an RTL8364B switch (LAN port and PC
+# port). The switch needs an init before eth0 works, and the init needs eth0
+# to be down. The MAC reset of eth0 needs the RGMII clock from the switch. So
+# this program runs before networking brings eth0 up. It does these steps:
+#
+#   1. Set the MAC address of eth0 from the board (the cfg partition, see
+#      board.sh). Without a valid address, eth0 keeps the address of the
+#      kernel.
+#   2. Wait for the management interface of the switch driver
+#      (/sys/bus/mdio_bus/drivers/ucp10-rtl8364b-smi/*/smi).
+#   3. Run "rtl8363-init init". The tool puts the switch in RGMII mode with a
+#      fixed link of 1000 Mbit/s, full duplex, and enables the PHYs.
+#
+# rtl8363-init is built from tools/rtl8363-init (package uc-pxx-board).
+# Env: UC_PXX_IF (default eth0), UC_PXX_SMI_WAIT (seconds, default 10),
+# RTL8363_INIT (the tool), TSX_BOARD_CONF. Test hooks: UC_PXX_SYSNET,
+# UC_PXX_SMI_GLOB, TSX_CFG.
+#
+# TODO: not tested in this form on a unit. The bring-up initramfs ran the same
+# steps. Decide if the switch becomes a kernel driver (docs/hardware.md "Open
+# items"). Then this program goes away.
+set -eu
+IF=${UC_PXX_IF:-eth0}
+WAIT=${UC_PXX_SMI_WAIT:-10}
+TOOL=${RTL8363_INIT:-rtl8363-init}
+SMI_GLOB=${UC_PXX_SMI_GLOB:-/sys/bus/mdio_bus/drivers/ucp10-rtl8364b-smi/*/smi}
+SYSNET=${UC_PXX_SYSNET:-/sys/class/net}
+say() { echo "uc-pxx-switch: $*"; }
+
+start() {
+	. "${TSX_BOARD_CONF:-/usr/local/lib/tsx/board.sh}"
+	i=0
+	while [ ! -d "$SYSNET/$IF" ] && [ $i -lt "$WAIT" ]; do sleep 1; i=$((i + 1)); done
+	[ -d "$SYSNET/$IF" ] || { say "no $IF (the GMAC driver did not probe)"; return 0; }
+	# IFF_UP is bit 0 of the flags. The operstate also needs a link.
+	flags=$(cat "$SYSNET/$IF/flags" 2>/dev/null) || flags=0
+	if [ $(( flags & 1 )) = 1 ]; then
+		say "$IF is up already, the switch init needs it down"; return 0
+	fi
+	mac=$(tsx_board_mac)
+	if [ -n "$mac" ]; then
+		ip link set dev "$IF" address "$mac" && say "MAC address of $IF set (source: $(tsx_board_mac_source))"
+	else
+		say "no valid MAC address in the board data, $IF keeps the kernel address"
+	fi
+	i=0
+	# shellcheck disable=SC2086 # the glob is on purpose
+	while ! ls $SMI_GLOB >/dev/null 2>&1 && [ $i -lt "$WAIT" ]; do sleep 1; i=$((i + 1)); done
+	command -v "$TOOL" >/dev/null 2>&1 || { say "no $TOOL, the switch stays as it is"; return 0; }
+	if timeout 30 "$TOOL" init; then say "switch started"; else say "$TOOL init failed"; fi
+}
+
+case "${1:-}" in
+start) start;;
+status) command -v "$TOOL" >/dev/null 2>&1 && timeout 5 "$TOOL" status || say "no $TOOL";;
+*) echo "usage: uc-pxx-switch start | status" >&2; exit 2;;
+esac

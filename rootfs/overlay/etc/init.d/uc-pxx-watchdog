@@ -1,0 +1,46 @@
+#!/sbin/openrc-run
+# Feed the hardware watchdog (/dev/watchdog0) with busybox watchdog, so the
+# panel resets itself if the system hangs. It starts early in the boot
+# runlevel: the feeder keeps running while the slower boot steps work.
+# Without /dev/watchdog0 it does nothing. Settings and how to turn it off:
+# /etc/conf.d/uc-pxx-watchdog.
+description="Hardware watchdog: feeds /dev/watchdog0 while the system runs"
+supervisor=supervise-daemon
+command=/bin/busybox
+respawn_delay=2
+respawn_max=0
+depend() {
+	need devfs
+	after udev udev-settle
+	before localmount tsx-data
+}
+wd_prepare() {
+	: "${WATCHDOG_ENABLE:=yes}" "${WATCHDOG_DEV:=/dev/watchdog0}" "${WATCHDOG_TIMEOUT:=30}" "${WATCHDOG_INTERVAL:=10}"
+	case "$WATCHDOG_ENABLE" in yes|on|1) ;; *)
+		einfo "uc-pxx-watchdog: WATCHDOG_ENABLE=$WATCHDOG_ENABLE, not started"; return 1;; esac
+	[ -c "$WATCHDOG_DEV" ] || { einfo "uc-pxx-watchdog: no $WATCHDOG_DEV, not started"; return 1; }
+	case "$WATCHDOG_TIMEOUT$WATCHDOG_INTERVAL" in *[!0-9]*)
+		eerror "uc-pxx-watchdog: WATCHDOG_TIMEOUT and WATCHDOG_INTERVAL must be numbers"; return 1;; esac
+	# The kernel refuses a timeout above the hardware maximum and keeps its
+	# own default. So the service uses the maximum from sysfs. If sysfs has
+	# none, the fallback is 31 s.
+	wd_max=$(cat "${TSX_WATCHDOG_SYSFS:-/sys/class/watchdog}/${WATCHDOG_DEV##*/}/max_timeout" 2>/dev/null) || wd_max=
+	case "$wd_max" in ''|*[!0-9]*) wd_max=31;; esac
+	if [ "$WATCHDOG_TIMEOUT" -gt "$wd_max" ]; then
+		ewarn "uc-pxx-watchdog: WATCHDOG_TIMEOUT=$WATCHDOG_TIMEOUT is above the maximum, using $wd_max"
+		WATCHDOG_TIMEOUT=$wd_max
+	fi
+	[ "$WATCHDOG_INTERVAL" -ge 1 ] && [ $((WATCHDOG_INTERVAL * 2)) -le "$WATCHDOG_TIMEOUT" ] || {
+		eerror "uc-pxx-watchdog: WATCHDOG_INTERVAL must be 1 or more, at most half of WATCHDOG_TIMEOUT"; return 1; }
+	command_args="watchdog -F -t $WATCHDOG_INTERVAL -T $WATCHDOG_TIMEOUT $WATCHDOG_DEV"
+	return 0
+}
+start() {
+	# nothing to do is not a failure: do not hold up the boot
+	wd_prepare || return 0
+	default_start
+}
+stop() {
+	[ -e "/run/supervise-$RC_SVCNAME.pid" ] || return 0
+	default_stop
+}

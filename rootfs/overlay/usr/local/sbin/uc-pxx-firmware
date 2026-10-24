@@ -1,0 +1,97 @@
+#!/bin/sh
+# uc-pxx-firmware boot | status: copy the firmware of the unit.
+#
+# The Wi-Fi and Bluetooth module (AP6256) needs firmware files that belong to
+# the vendor. The repository and the images hold none. This program copies
+# them from the vendor partition of the unit into /lib/firmware, once:
+#
+#   vendor file (in etc/firmware)  copy
+#   fw_bcm43456c5_ag.bin           brcm/brcmfmac43456-sdio.bin   (Wi-Fi firmware)
+#   nvram_ap6256_FCC.txt           brcm/brcmfmac43456-sdio.txt   (Wi-Fi NVRAM, US power table)
+#   BCM4345C5.hcd                  brcm/BCM4345C5.hcd            (Bluetooth patch)
+#
+# The partition is mounted read-only. The program never writes the eMMC.
+#
+#   uc-pxx-firmware boot    copy the files that are not there yet
+#   uc-pxx-firmware status  show which files are there
+#
+# Env (test hooks and settings): UC_PXX_FW_PARTS (partition names to try, in
+# order, default "vendor_b vendor_a"), UC_PXX_FW_SRC (a folder with the vendor
+# files, used instead of a partition), UC_PXX_FW_DEST (default /lib/firmware),
+# TSX_SYSBLOCK, TSX_DEVDIR, UC_PXX_RUN.
+#
+# TODO:
+#   - Phase 1 has the files in vendor_b (the stock Android of slot B). Phase 2
+#     has no vendor partition. The installer must save the files to /data
+#     first, and this program must read them from there.
+#   - Choose the NVRAM file by region (FCC for the US, CE for the EU). Today
+#     the program copies the FCC file. The stock firmware also has a CE file.
+#   - After the copy, make the Wi-Fi and Bluetooth drivers probe again. The
+#     drivers are built in and may probe before the files exist. Check on a
+#     unit which way works (a bind through sysfs, or a reload).
+set -eu
+SRC_PARTS=${UC_PXX_FW_PARTS:-vendor_b vendor_a}
+DEST=${UC_PXX_FW_DEST:-/lib/firmware}
+RUN=${UC_PXX_RUN:-/run}
+MNT=$RUN/uc-pxx-vendor
+say() { echo "uc-pxx-firmware: $*"; }
+
+# MAP: vendor file, then destination, one pair on each line
+MAP='fw_bcm43456c5_ag.bin brcm/brcmfmac43456-sdio.bin
+nvram_ap6256_FCC.txt brcm/brcmfmac43456-sdio.txt
+BCM4345C5.hcd brcm/BCM4345C5.hcd'
+
+missing() {
+	echo "$MAP" | while read -r _v d; do [ -s "$DEST/$d" ] || echo "$d"; done
+}
+
+part_dev() {
+	for u in "${TSX_SYSBLOCK:-/sys/class/block}"/mmcblk*p*/uevent; do
+		[ -r "$u" ] && grep -qx "PARTNAME=$1" "$u" || continue
+		b=${u%/uevent}; echo "${TSX_DEVDIR:-/dev}/${b##*/}"; return 0
+	done
+	return 1
+}
+
+copy_from() {
+	echo "$MAP" | while read -r v d; do
+		[ -s "$DEST/$d" ] && continue
+		if [ -s "$1/etc/firmware/$v" ]; then
+			mkdir -p "$DEST/$(dirname "$d")"
+			cp "$1/etc/firmware/$v" "$DEST/$d.part" && mv "$DEST/$d.part" "$DEST/$d"
+			say "copied $d"
+		else
+			say "the vendor partition has no $v"
+		fi
+	done
+}
+
+boot() {
+	if [ -z "$(missing)" ]; then say "all firmware files are there"; return 0; fi
+	if [ -n "${UC_PXX_FW_SRC:-}" ]; then copy_from "$UC_PXX_FW_SRC"; return 0; fi
+	for p in $SRC_PARTS; do
+		dev=$(part_dev "$p") || continue
+		mkdir -p "$MNT"
+		if mount -t ext4 -o ro,noload "$dev" "$MNT" 2>/dev/null; then
+			copy_from "$MNT"
+			umount "$MNT"; rmdir "$MNT" 2>/dev/null || true
+			[ -z "$(missing)" ] && return 0
+		else
+			say "cannot mount $p read-only (not a file system?)"
+		fi
+	done
+	say "firmware files missing: $(missing | tr '\n' ' ')"
+	return 0
+}
+
+status() {
+	echo "$MAP" | while read -r _v d; do
+		if [ -s "$DEST/$d" ]; then echo "present  $d"; else echo "missing  $d"; fi
+	done
+}
+
+case "${1:-}" in
+boot) boot;;
+status) status;;
+*) echo "usage: uc-pxx-firmware boot | status" >&2; exit 2;;
+esac

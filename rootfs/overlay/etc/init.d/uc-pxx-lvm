@@ -1,0 +1,33 @@
+#!/sbin/openrc-run
+# The data volume of phase 1 (docs/boot.md "Phase 1"): the LVM volume group tsx
+# over vendor_a and oem_a, with the logical volume data (ext4, label tsxdata,
+# on /data by fstab). This service activates the group before localmount
+# mounts /data. Phase 2 has no volume group (/data is userdata, label
+# tsxdata). The service then does nothing. It never fails the boot. /data has
+# nofail, so a panel with a broken volume keeps its state on the root file
+# system. Log: /run/uc-pxx-lvm.log.
+description="Activate the LVM data volume (volume group tsx) before /data is mounted"
+depend() {
+	after udev-settle modules
+	before localmount fsck tsx-data
+}
+
+VG=${TSX_VG:-tsx}
+LOG=${UC_PXX_LVM_LOG:-/run/uc-pxx-lvm.log}
+
+start() {
+	ebegin "Data volume (LVM volume group $VG)"
+	: > "$LOG"
+	modprobe -q dm-mod >> "$LOG" 2>&1
+	if ! lvm vgs "$VG" >> "$LOG" 2>&1; then
+		einfo "uc-pxx-lvm: no volume group $VG (phase 2 keeps /data on userdata)"
+		eend 0; return 0
+	fi
+	if lvm vgchange -a y --sysinit "$VG" >> "$LOG" 2>&1; then
+		lvm vgmknodes "$VG" >> "$LOG" 2>&1
+		einfo "uc-pxx-lvm: volume group $VG active"
+	else
+		eerror "uc-pxx-lvm: cannot activate the volume group $VG (see $LOG). /data stays on the root file system"
+	fi
+	eend 0
+}

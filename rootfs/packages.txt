@@ -1,0 +1,106 @@
+# Alpine packages for the UC-P10 rootfs (aarch64, one per line, # starts a comment).
+# base system
+alpine-baselayout
+alpine-release
+apk-tools
+busybox
+busybox-openrc
+busybox-suid
+openrc
+musl-utils
+eudev
+eudev-openrc
+e2fsprogs
+dosfstools
+# The data volume (uc-pxx-lvm). The kernel has the device mapper built in.
+lvm2
+util-linux-misc
+kmod
+tzdata
+ca-certificates
+logrotate
+# network / time / remote access
+ifupdown-ng
+chrony
+openssh-server
+openssh-sftp-server
+openssh-client-default
+# Wi-Fi tools (AP6256 through brcmfmac). There is no Wi-Fi configuration yet.
+# eth0 is the network. The regulatory database is for cfg80211.
+iw
+wireless-regdb
+# kiosk: seat, compositor, browser, input
+seatd
+seatd-openrc
+sway
+# the background of sway is the boot splash until the page has painted (kiosk-session)
+swaybg
+# on-screen keyboards (KIOSK_OSK). dbus is for the session API of squeekboard.
+squeekboard
+wvkbd-mobintl
+dbus
+# tsx-overlay (quick-settings overlay, from the package tsx-kiosk): libraries it links
+cairo
+wayland-libs-client
+# Alpine chromium, not pinned and not patched. It pulls in icu-data-full
+# (31 MiB) as a hard dependency.
+# TODO: check Chromium with panfrost (GPU compositing, flags in TSX_BROWSER_GL_FLAGS).
+# If it needs a patch, the project package uc-pxx-chromium replaces this one
+# (packages-tsx.txt).
+chromium
+font-dejavu
+libinput
+# GPU: Mesa panfrost (mesa-dri-gallium) and the DRM/KMS display. kmscube,
+# modetest (libdrm-tests) and eglinfo are for checks.
+mesa-dri-gallium
+mesa-egl
+mesa-gles
+mesa-gbm
+kmscube
+libdrm-tests
+mesa-utils
+# audio: amixer, aplay, arecord and alsactl for uc-pxx-audio and tests
+alsa-utils
+# Sendspin player (sendspin-cli, packages-tsx.txt): alsa-lib + avahi dns_sd over dbus
+alsa-lib
+avahi
+avahi-compat-libdns_sd
+# tools
+brightnessctl
+evtest
+curl
+# the tsx-mqtt Home Assistant bridge
+mosquitto-clients
+# The panel as one Home Assistant device over the ESPHome native API
+# (tsx-esphome). python3 and the libraries that aioesphomeapi and the device
+# code import (zeroconf, protobuf, cryptography for the API encryption, tzlocal,
+# aiohappyeyeballs). The other libraries are pinned wheels that install-lva.sh
+# of the package tsx-ha puts into /opt/lva/lib. python3 also runs the setup page
+# (tsx-setupd) and the firmware tool.
+# voice: the Assist satellite linux-voice-assistant (install-lva.sh of tsx-ha).
+# It needs py3-numpy for the wake word, and py3-mpv with mpv-libs to play
+# replies on ALSA. The TFLite library for the wake word comes from the
+# tensorflow-lite-c package (packages-tsx.txt).
+python3
+py3-zeroconf
+py3-numpy
+py3-protobuf
+py3-cryptography
+py3-tzlocal
+py3-aiohappyeyeballs
+py3-mpv
+mpv-libs
+# Bluetooth proxy (tsx-bt). The proxy needs no package. It uses the HCI and
+# L2CAP sockets of the kernel through the Python standard library, and the
+# kernel registers hci0 (the BCM4345C5 attaches as a serdev device). These two
+# packages are for diagnosis on the panel. btmon shows the HCI traffic.
+# hciconfig and hcitool show the controller and scan by hand.
+bluez-btmon
+bluez-deprecated
+# more tools
+i2c-tools
+htop
+procps-ng
+wlr-randr
+grim
+wayland-utils

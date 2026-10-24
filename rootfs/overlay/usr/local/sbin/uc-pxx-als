@@ -1,0 +1,21 @@
+#!/bin/sh
+# uc-pxx-als start | status: the ambient light feed of the UC-P10.
+#
+# The light sensor is a JSA1213. The kernel driver jsa1212 shows it as an IIO
+# device (name jsa1212, value in_illuminance_input). The automatic brightness
+# of the panel needs the light level in lux.
+#
+# TODO: this is a stub. It reads nothing. The real program must do this:
+#   1. Find the IIO device with the name jsa1212.
+#   2. Read the illuminance at ALS_PERIOD_S intervals.
+#   3. Write the level in the form that the shared brightness control reads
+#      (the tsx-sensord of the xx70 writes /run/tsx/als.state and als-level).
+#      Check tsx-linux-common for the current interface.
+#   4. Apply ALS_SCALE from panel-board.conf.
+set -eu
+say() { echo "uc-pxx-als: $*"; }
+case "${1:-status}" in
+start|status) say "stub: no light feed yet";;
+*) echo "usage: uc-pxx-als start | status" >&2; exit 2;;
+esac
+exit 0

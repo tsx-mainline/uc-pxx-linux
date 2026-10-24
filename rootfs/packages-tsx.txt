@@ -1,0 +1,14 @@
+# Packages from this project's own apk repository (tsx-aports: common + uc-pxx).
+# mkrootfs.sh installs them from a local copy of the published tree
+# (TSX_APK_LOCAL, see build-rootfs.sh). The profile meta package
+# (uc-pxx-console, -kiosk or -ha) comes with them. The panel lists the
+# repository (TSX_APK_URL, panel.conf APK_URL), so `apk upgrade` sees it.
+#
+# the signing key of the repository (also in overlay/etc/apk/keys)
+tsx-keys
+# the kernel: the boot image /boot/uc-pxx-lts.img and its module tree
+uc-pxx-kernel-lts
+# TensorFlow Lite C, the wake word library of the voice satellite
+tensorflow-lite-c
+# Sendspin player for Music Assistant (/usr/bin/sendspin-cli, tsx-sendspin)
+sendspin-cli

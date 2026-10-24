@@ -1,0 +1,10 @@
+#!/sbin/openrc-run
+# Sound card setup (uc-pxx-audio init). Without the card it does nothing and
+# does not fail.
+description="Sound card mixer paths and levels (/etc/tsx/audio.conf)"
+depend() { after udev-settle uc-pxx-firmware; before kiosk; }
+start() {
+	ebegin "Setting up the sound card"
+	/usr/local/sbin/uc-pxx-audio init
+	eend $?
+}

@@ -1,0 +1,18 @@
+# uc-pxx-watchdog settings (docs/rootfs.md "Watchdog").
+#
+# Turn the watchdog off: set WATCHDOG_ENABLE=no here (the service then starts
+# and does nothing), or run `rc-update del uc-pxx-watchdog boot`. A running one
+# stops with `rc-service uc-pxx-watchdog stop`. Some kernels cannot close the
+# device once it is open ("nowayout"). Stopping then leaves the hardware
+# armed, and the panel resets after the timeout. Reboot to turn such a
+# watchdog off.
+WATCHDOG_ENABLE=yes
+WATCHDOG_DEV=/dev/watchdog0
+# Seconds of watchdog time without a feed before the hardware resets the
+# panel. The service reads the maximum from sysfs (max_timeout) and changes a
+# larger value to it. The DesignWare watchdog of the RK3399 has a maximum that
+# depends on its clock. TODO: read max_timeout on a unit and set a value that
+# needs no change.
+WATCHDOG_TIMEOUT=20
+# Seconds between feeds. At most half of the timeout.
+WATCHDOG_INTERVAL=5

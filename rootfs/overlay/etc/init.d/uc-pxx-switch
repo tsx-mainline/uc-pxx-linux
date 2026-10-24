@@ -1,0 +1,17 @@
+#!/sbin/openrc-run
+# Set the MAC address of eth0 and start the RTL8364B Ethernet switch
+# (uc-pxx-switch start). It must run while eth0 is down, before networking.
+description="Ethernet switch (RTL8364B) and the MAC address of eth0"
+depend() {
+	need localmount
+	after udev-settle
+	before networking
+}
+start() {
+	ebegin "Ethernet switch"
+	/usr/local/sbin/uc-pxx-switch start 2>&1 | while read -r l; do
+		einfo "  $l"; logger -t uc-pxx-switch "${l#uc-pxx-switch: }"
+	done
+	# It never fails the boot. The panel then has no wired network.
+	eend 0
+}

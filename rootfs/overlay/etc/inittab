@@ -1,0 +1,9 @@
+# /etc/inittab (kiosk profiles). The panel screen belongs to the kiosk (sway on
+# the active VT through seatd), so there is no getty on tty1 to tty6. Log in on
+# the serial console (ttyS2, the debug UART) or over ssh.
+::sysinit:/sbin/openrc sysinit
+::sysinit:/sbin/openrc boot
+::wait:/sbin/openrc default
+::respawn:/bin/sh -c "[ -c /dev/ttyS2 ] && exec /sbin/getty -L 115200 ttyS2 vt100 || exec sleep 2147483647"
+::ctrlaltdel:/sbin/reboot
+::shutdown:/sbin/openrc shutdown

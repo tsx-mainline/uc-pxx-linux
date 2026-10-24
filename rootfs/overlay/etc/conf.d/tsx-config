@@ -1,0 +1,8 @@
+# The order of tsx-config for the UC-P10 board. The common init script of
+# tsx-config reads these OpenRC keys (docs/layout.md of tsx-linux-common).
+# Services that tsx-config must wait for:
+rc_after="udev-settle uc-pxx-firmware"
+# Services that read /etc/tsx/panel-board.conf. That file is a link to
+# /run/tsx/panel-board.conf, which tsx-hw detect writes at the start of
+# tsx-config (docs/rootfs.md "Board values"). So these start after it:
+rc_before="tsx-idled tsx-buttons"

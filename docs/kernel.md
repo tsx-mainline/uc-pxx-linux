@@ -47,7 +47,7 @@ The board needs no kernel module to boot. The drivers for the display,
 network, Wi-Fi, Bluetooth, audio, touch and GPU are built in. The initramfs is
 built into the Image (`CONFIG_INITRAMFS_SOURCE`). The firmware for Wi-Fi and
 Bluetooth is not in the initramfs. The service `uc-pxx-firmware` copies it
-from the unit. See rootfs.md.
+from the unit. See [rootfs.md](rootfs.md).
 
 ## Build
 

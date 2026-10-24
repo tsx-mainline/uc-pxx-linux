@@ -65,7 +65,7 @@ addresses come from the module.
 ## Open items
 
 - The RTL8364B switch needs an init in user space or in a kernel driver.
-  Today `tools/rtl8363-init` does it. See rootfs.md.
+  Today `tools/rtl8363-init` does it. See [rootfs.md](rootfs.md).
 - The handset volume shares the DAC with the speaker. A separate volume for
   each output needs a codec route change.
 - The USB-C port had no VBUS partner on the unit that we used. It is not

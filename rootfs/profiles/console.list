@@ -1,0 +1,84 @@
+# Base of every image profile (profile "console"): a plain Linux system with
+# a text login on the panel screen and SSH. Every other profile adds to it.
+# Format: KIND NAME. See ../profile.sh. The packages own the files of the panel
+# software. A profile can also have files that no other profile has, in
+# profiles/NAME/overlay (console: the login on tty1. kiosk: the marker file
+# /etc/tsx/profile. ha: none, and a missing marker means ha). image.list names
+# the files that the image keeps. The build copies them from there or from
+# rootfs/overlay.
+#   step     build step of mkrootfs.sh (the profile has the step, or it has not)
+#   pkg      Alpine or tsx-aports package, from packages.txt or packages-tsx.txt
+#   svc      OpenRC service: svc RUNLEVEL NAME (boot or default)
+#   user     system user that mkrootfs.sh adds
+
+step firmware
+step ssh-policy
+step root-password
+
+# --- Alpine packages
+pkg alpine-baselayout
+pkg alpine-release
+pkg apk-tools
+pkg busybox
+pkg busybox-openrc
+pkg busybox-suid
+pkg openrc
+pkg musl-utils
+pkg eudev
+pkg eudev-openrc
+pkg e2fsprogs
+pkg dosfstools
+pkg lvm2
+pkg util-linux-misc
+pkg kmod
+pkg tzdata
+pkg ca-certificates
+pkg logrotate
+pkg ifupdown-ng
+pkg chrony
+pkg openssh-server
+pkg openssh-sftp-server
+pkg openssh-client-default
+pkg iw
+pkg wireless-regdb
+pkg dbus
+pkg curl
+pkg alsa-lib
+pkg alsa-utils
+pkg avahi
+pkg python3
+pkg bluez-btmon
+pkg bluez-deprecated
+pkg brightnessctl
+pkg evtest
+pkg i2c-tools
+pkg htop
+pkg procps-ng
+pkg tsx-keys
+pkg uc-pxx-kernel-lts
+
+# --- services
+# The boot runlevel finishes before the default runlevel starts. So the switch
+# is ready before networking starts.
+svc boot uc-pxx-lvm
+svc boot uc-pxx-watchdog
+svc boot tsx-data
+svc boot tsx-config
+svc boot uc-pxx-firmware
+svc boot uc-pxx-switch
+svc boot tsx-setup
+svc boot tsx-hostname
+svc default uc-pxx-audio
+svc default uc-pxx-als
+svc default tsx-idled
+svc default tsx-buttons
+svc default tsx-panelctl
+svc default tsx-autoupdate
+svc default uc-pxx-boot-ok
+svc default networking
+svc default chronyd
+svc default sshd
+svc default crond
+svc default dbus
+svc default avahi-daemon
+svc default local

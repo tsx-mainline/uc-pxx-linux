@@ -1,0 +1,32 @@
+#!/bin/sh
+# uc-pxx-boot-ok [status]: mark this boot as good for U-Boot.
+#
+# U-Boot starts a slot while the slot has tries left. A boot that nobody marks
+# as good uses up the tries, and U-Boot then starts the other slot
+# (docs/boot-control.md). /etc/init.d/uc-pxx-boot-ok runs this program once
+# the system is up (an IPv4 address and sshd).
+#
+# TODO: this is a stub. It marks nothing. The marking needs the reviewed
+# boot-control tool (uc-pxx-bootctl) and the hook (uc-pxx-mark-boot), which
+# are not in this repository yet (docs/boot-control.md). When they are here,
+# this program must do these steps and no others:
+#   1. Stop when the kernel command line has uc-pxx.nomark, or when the file
+#      /etc/uc-pxx-nomark exists (test images).
+#   2. Stop when /etc/uc-pxx-build-id differs from the build token in the
+#      header of the boot image in the slot. A boot from RAM must never mark
+#      the image in the slot.
+#   3. Wait until the uptime is at least 60 seconds.
+#   4. Stop when the kernel has tainted itself with an oops (taint bit 7).
+#   5. Take the lock /run/uc-pxx-abdata.lock. Stop when the flash wrapper holds
+#      it, or when /run/uc-pxx-boot-reflashed exists.
+#   6. Run "uc-pxx-bootctl mark-successful" for the running slot, and log the
+#      exit status. Light the red status LED on an exit status that means an
+#      unknown state.
+set -eu
+say() { echo "uc-pxx-boot-ok: $*"; }
+case "${1:-mark}" in
+status) say "stub: the marking is not implemented";;
+mark) say "stub: the marking is not implemented, the boot stays unmarked";;
+*) echo "usage: uc-pxx-boot-ok [status]" >&2; exit 2;;
+esac
+exit 0

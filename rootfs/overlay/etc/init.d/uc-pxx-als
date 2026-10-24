@@ -1,0 +1,14 @@
+#!/sbin/openrc-run
+# Ambient light feed (uc-pxx-als). The JSA1213 sensor appears as an IIO device.
+# The program reads it and writes the light level for the automatic
+# brightness.
+# TODO: the program is a stub. When it is a daemon, run it with supervise-daemon.
+description="Ambient light sensor feed for the automatic brightness"
+depend() { need localmount; after udev-settle tsx-config; }
+start() {
+	ebegin "Ambient light feed"
+	/usr/local/sbin/uc-pxx-als start 2>&1 | while read -r l; do
+		einfo "  $l"
+	done
+	eend 0
+}

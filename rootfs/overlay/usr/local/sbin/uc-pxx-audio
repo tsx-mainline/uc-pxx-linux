@@ -1,0 +1,134 @@
+#!/bin/sh
+# uc-pxx-audio: sound card of the UC-P10 (AIC3104 codec). Configuration:
+# /etc/tsx/audio.conf.
+#
+#   uc-pxx-audio init          set the mixer paths and the levels (boot)
+#   uc-pxx-audio status        card, PCM devices and the volume
+#   uc-pxx-audio card          print the ALSA card name (TSX_SOUND_CARD of the board file)
+#   uc-pxx-audio volume [N|+N|-N]
+#                              speaker level in %: 0 is the control value 0,
+#                              1..100 are VOLUME_MIN..VOLUME_MAX. Saved. No
+#                              argument: print it. Control: PCM Playback Volume
+#   uc-pxx-audio fixed         the speaker at VOLUME_SENDSPIN % for the Sendspin
+#                              player (TSX_VOLUME_FIXED_CMD of the board file).
+#                              The saved volume does not change
+#
+# The mixer defaults are the state in which the stock firmware (Grandstream
+# GS_AVS) keeps the codec: the DACs go to the line, HP and HPCOM outputs. The
+# capture comes from LINE1L and LINE1R. The right DAC (channel 4 of the
+# playback PCM) feeds the hands-free amplifier and the handset amplifier. Both
+# amplifier enables are on by default. The device tree sets them. This script
+# does not switch them.
+#
+# Without the card, init exits 0. The other commands exit 2.
+# TODO: mute, and a separate volume for the handset. Both share the DAC with the
+# speaker (docs/hardware.md "Open items").
+CONF=${TSX_AUDIO_CONF:-/etc/tsx/audio.conf}
+ASOUND=${TSX_ASOUND_DIR:-/proc/asound}
+AMIXER=${AMIXER:-amixer}
+
+. "${TSX_BOARD_CONF:-/usr/local/lib/tsx/board.sh}"
+CARD=$TSX_SOUND_CARD CARD_WAIT=${UC_PXX_CARD_WAIT:-15}
+SPEAKER_VOLUME=75 MIC_VOLUME=30 VOLUME_MAX=100 VOLUME_MIN=40 VOLUME_SENDSPIN=100
+[ -r "$CONF" ] && . "$CONF"
+case $VOLUME_SENDSPIN in ''|*[!0-9]*) VOLUME_SENDSPIN=100;; esac
+[ "$VOLUME_SENDSPIN" -gt 100 ] && VOLUME_SENDSPIN=100
+STATE_DIR=${UC_PXX_STATE_DIR:-/var/lib/uc-pxx}; VSTATE=$STATE_DIR/volume
+
+log() { echo "uc-pxx-audio: $*"; command -v logger >/dev/null && logger -t uc-pxx-audio "$*"; return 0; }
+have_card() { [ -e "$ASOUND/$CARD" ]; }
+need_card() { have_card || { echo "uc-pxx-audio: no sound card $CARD" >&2; exit 2; }; }
+cset() { $AMIXER -q -c "$CARD" cset name="$1" "$2" 2>/dev/null || log "cannot set '$1' to $2"; }
+
+# percent_to_raw N: the control value for N percent
+percent_to_raw() {
+	if [ "$1" -le 0 ]; then echo 0; return; fi
+	echo $(( VOLUME_MIN + ($1 - 1) * (VOLUME_MAX - VOLUME_MIN) / 99 ))
+}
+set_percent() {
+	_raw=$(percent_to_raw "$1")
+	cset 'PCM Playback Volume' "$_raw,$_raw"
+}
+get_percent() {
+	_p=$(cat "$VSTATE" 2>/dev/null)
+	case $_p in ''|*[!0-9]*) _p=;; esac
+	echo "$_p"
+}
+
+wait_card() {
+	_i=0
+	while ! have_card && [ $_i -lt "$CARD_WAIT" ]; do sleep 1; _i=$((_i + 1)); done
+	have_card
+}
+
+init_card() {
+	wait_card || { log "no sound card $CARD"; return 0; }
+	cset 'Left DAC Mux' 'DAC_L1'
+	cset 'Right DAC Mux' 'DAC_R1'
+	cset 'Left HPCOM Mux' 'differential of HPLOUT'
+	cset 'Right HPCOM Mux' 'differential of HPROUT'
+	cset 'Left Line Mixer DACL1 Switch' on
+	cset 'Left HP Mixer DACL1 Switch' on
+	cset 'Right HP Mixer DACR1 Switch' on
+	cset 'Left HPCOM Mixer DACL1 Switch' on
+	cset 'Right HPCOM Mixer DACR1 Switch' on
+	# The right DAC feeds the speaker and the handset amplifier. Route it to
+	# the right line out as well. The stock firmware leaves this one off.
+	cset 'Right Line Mixer DACR1 Switch' on
+	cset 'Line DAC Playback Volume' '100,100'
+	cset 'HP DAC Playback Volume' '100,100'
+	cset 'HPCOM DAC Playback Volume' '100,100'
+	cset 'Line Playback Switch' 'on,on'
+	cset 'HP Playback Switch' 'on,on'
+	cset 'HPCOM Playback Switch' 'on,on'
+	cset 'Left PGA Mixer Line1L Switch' on
+	cset 'Right PGA Mixer Line1R Switch' on
+	cset 'Left Line1L Mux' 'single-ended'
+	cset 'Right Line1R Mux' 'single-ended'
+	cset 'PGA Capture Volume' "$MIC_VOLUME,$MIC_VOLUME"
+	cset 'PGA Capture Switch' 'on,on'
+	# The stock firmware sets the ADC high-pass filter to 0.0045 Fs. The
+	# mainline default is off, and the ADC offset (-28 dBFS on the handset
+	# microphone channel) would pass.
+	cset 'ADC HPF Cut-off' '0.0045xFs,0.0045xFs'
+	_p=$(get_percent)
+	if [ -n "$_p" ]; then
+		set_percent "$_p"
+	else
+		cset 'PCM Playback Volume' "$SPEAKER_VOLUME,$SPEAKER_VOLUME"
+	fi
+	log "mixer defaults applied"
+}
+
+cmd=${1:-}; [ $# -gt 0 ] && shift
+case "$cmd" in
+init) init_card;;
+card) echo "$CARD";;
+status)
+	need_card
+	echo "card: $CARD"
+	sed 's/^/  /' "$ASOUND/pcm" 2>/dev/null
+	echo "volume: $(get_percent)%"
+	$AMIXER -c "$CARD" cget name='PCM Playback Volume' 2>/dev/null | sed 's/^/  /';;
+volume)
+	need_card
+	cur=$(get_percent); [ -n "$cur" ] || cur=100
+	case "${1:-}" in
+	'') echo "$cur"; exit 0;;
+	+*|-*)
+		n=${1#[+-]}
+		case $n in ''|*[!0-9]*) echo "usage: uc-pxx-audio volume [N|+N|-N]" >&2; exit 2;; esac
+		case $1 in +*) new=$((cur + n));; *) new=$((cur - n));; esac;;
+	*[!0-9]*) echo "usage: uc-pxx-audio volume [N|+N|-N]" >&2; exit 2;;
+	*) new=$1;;
+	esac
+	[ "$new" -lt 0 ] && new=0
+	[ "$new" -gt 100 ] && new=100
+	mkdir -p "$STATE_DIR" && echo "$new" > "$VSTATE"
+	set_percent "$new"
+	echo "$new";;
+fixed)
+	need_card
+	set_percent "$VOLUME_SENDSPIN";;
+*) sed -n '2,14p' "$0" >&2; exit 2;;
+esac

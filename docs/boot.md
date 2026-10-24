@@ -118,4 +118,4 @@ review. Slot B gets mainline only after slot A ran in phase 1 without faults.
 At every step one slot must stay bootable.
 
 The vendor partition is gone in phase 2, and the firmware files for Wi-Fi and
-Bluetooth come from it today. See "Firmware" in rootfs.md.
+Bluetooth come from it today. See "Firmware" in [rootfs.md](rootfs.md).
