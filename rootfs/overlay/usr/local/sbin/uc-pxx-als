@@ -36,7 +36,7 @@ nothing is learned.
 Settings: /run/tsx/sensors.conf (AUTO_BRIGHTNESS, ALS_SCALE; written by
 `tsx-config apply`), then /etc/kiosk.conf, then /etc/tsx/panel-board.conf
 (the board layer wins over kiosk.conf). SIGHUP reads them again.
-AUTO_BRIGHTNESS is on while panel.conf does not set it. The backlight range
+AUTO_BRIGHTNESS is on while panel.conf does not set it (default on, user decision 2026-10-24). The backlight range
 (BACKLIGHT_MAX, BACKLIGHT_MIN) comes from the board file, else from
 max_brightness of the backlight device.
 

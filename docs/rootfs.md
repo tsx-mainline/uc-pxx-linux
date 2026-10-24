@@ -231,7 +231,7 @@ The program writes the shared files of tsx-linux-common:
 | `/run/tsx/als.state` | `raw` (lux), `report` (lux with a deadband), `auto`, `scale`, `learned`, `counts` | `tsx-panelctl`, `tsx-mqtt`, `tsx_panel`, the overlay |
 | `/run/tsx/als-level` | The backlight level, while `AUTO_BRIGHTNESS` is on | `tsx-idled` |
 
-`AUTO_BRIGHTNESS` is on while `panel.conf` does not set it. `tsx-als auto
+`AUTO_BRIGHTNESS` is on by default (user decision 2026-10-24). It stays on while `panel.conf` does not set it. `tsx-als auto
 on|off` (the Home Assistant switch and the overlay call it) sets it and runs
 `tsx-config apply`. The apply reloads `uc-pxx-als` (`TSX_CONFIG_RELOAD`).
 `ALS_WATCH=1` in `default.conf` makes `tsx-idled` apply a new level at once.

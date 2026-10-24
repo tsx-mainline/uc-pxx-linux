@@ -92,6 +92,18 @@ eq "$(st auto)" "off" "off: als.state says off"
 eq "$(st raw)" "29.00" "off: the light is still reported"
 setup 58; echo 'AUTO_BRIGHTNESS="on"' > "$T/sensors.conf"; daemon
 eq "$(st auto)" "on" "on: als.state says on"
+# the default is on: the key is unset (a fresh panel.conf), empty, or the file is missing
+setup 58; : > "$T/sensors.conf"; daemon
+eq "$(st auto)" "on" "default: sensors.conf without the key: on"
+[ -s "$T/run/als-level" ] && ok "default: als-level is written" || bad "default: no als-level"
+setup 58; echo 'AUTO_BRIGHTNESS=""' > "$T/sensors.conf"; daemon
+eq "$(st auto)" "on" "default: an empty AUTO_BRIGHTNESS: on"
+setup 58; rm -f "$T/sensors.conf"; daemon
+eq "$(st auto)" "on" "default: no sensors.conf at all: on"
+setup 58; printf 'PRESENCE_WAKE="off"\nALS_SCALE="2"\n' > "$T/sensors.conf"; daemon
+eq "$(st auto)" "on" "default: other keys set, AUTO_BRIGHTNESS not: on"
+setup 58; grep -q '^AUTO_BRIGHTNESS=' "$HERE/overlay/etc/tsx/panel-board.d/default.conf" \
+	&& bad "default.conf sets AUTO_BRIGHTNESS (the user setting decides)" || ok "default.conf leaves AUTO_BRIGHTNESS to the user setting"
 
 echo "== the backlight range =="
 setup 4095; printf 'BACKLIGHT_MAX=2\nBACKLIGHT_MIN=1\nBRIGHTNESS_DAY=2\nBRIGHTNESS_NIGHT=1\n' > "$T/board.conf"; daemon
