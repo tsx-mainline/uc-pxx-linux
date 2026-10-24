@@ -1,0 +1,25 @@
+--- a/rtk_switch.c	2026-10-23 22:35:58.725182631 -0600
++++ b/rtk_switch.c	2026-10-23 22:35:58.737182767 -0600
+@@ -626,6 +626,22 @@
+     if((retVal = rtl8367c_setAsicSdsReg(0,1,0, regData)) != RT_ERR_OK)
+         return retVal;
+ 
++    /* UC-P10: PHY SRAM patch present in the stock Grandstream 4.4 kernel
++     * 8364B init (Image+0x51df34..0x51df88), absent from this SDK drop:
++     * SRAM[0x8016]=0x0b00, SRAM[0x83a7]=0x160c on PHY 1 and PHY 3.
++     * SRAM write = OCP 0xa436 <- addr, OCP 0xa438 <- data. */
++    {
++        static const rtk_uint32 sram[][2] = { {0x8016, 0x0b00}, {0x83a7, 0x160c} };
++        rtk_uint32 i, phy;
++        for (i = 0; i < 2; i++)
++            for (phy = 1; phy <= 3; phy += 2) {
++                if ((retVal = rtl8367c_setAsicPHYOCPReg(phy, 0xa436, sram[i][0])) != RT_ERR_OK)
++                    return retVal;
++                if ((retVal = rtl8367c_setAsicPHYOCPReg(phy, 0xa438, sram[i][1])) != RT_ERR_OK)
++                    return retVal;
++            }
++    }
++
+     return RT_ERR_OK;
+ }
+ 
