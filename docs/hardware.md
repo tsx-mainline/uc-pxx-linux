@@ -41,8 +41,8 @@ channels and shares the capture device with dsnoop.
 ## Keys and LEDs
 
 The touch controller reports six touch keys (object T15). The layout below is
-user-confirmed. The key order is to verify with evtest. Nobody has pressed the
-keys with evtest yet.
+verified with evtest on the UC-P10. A press of each key from left to right gives
+the codes 148, 149, 202, 114, 115 and 113.
 
 | Place (left to right) | Key | Key code | LED |
 |---|---|---|---|

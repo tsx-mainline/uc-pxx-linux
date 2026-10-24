@@ -77,7 +77,7 @@ grep -q '^LABEL=tsxroot[[:space:]]*/[[:space:]]' "$HERE/overlay/etc/fstab" && ok
 grep -q '^LABEL=tsxdata[[:space:]]*/data[[:space:]]' "$HERE/overlay/etc/fstab" && ok "fstab: /data by the label tsxdata" || bad "fstab: no /data"
 pairs=$(awk '$1 == "button" { print $2 "=" $3 }' "$HERE/overlay/etc/tsx/buttons-board.conf" | tr '\n' ' ')
 eq "$pairs" "teams=148 headset=149 speaker=202 volume_down=114 volume_up=115 mic=113 " "buttons-board.conf: the six keys in physical order"
-grep -q 'user-confirmed layout; key order to verify with evtest' "$HERE/overlay/etc/tsx/buttons-board.conf" && ok "buttons-board.conf: marked as not verified" || bad "buttons-board.conf: no verify mark"
+grep -q 'verified with evtest on the UC-P10' "$HERE/overlay/etc/tsx/buttons-board.conf" && ok "buttons-board.conf: marked as verified" || bad "buttons-board.conf: no verify mark"
 grep -q '^SLIDE_STEP=0' "$HERE/overlay/etc/tsx/buttons-board.conf" && ok "buttons-board.conf: no slide" || bad "buttons-board.conf: SLIDE_STEP"
 for l in teams_white mute_headset mute_speaker mute_red; do
 	grep -q "^#   $l " "$HERE/overlay/etc/tsx/buttons-board.conf" && ok "buttons-board.conf: names the LED $l" || bad "buttons-board.conf: no LED $l"
