@@ -142,7 +142,7 @@ writes two files in `/run/tsx`:
 | `MIC`, `BT`, `WIFI` | `yes` | Fixed. Parts of the board |
 | `CAMERA` | `no` | Fixed. The camera is not fitted |
 | `LEDBAR` | `no` | Fixed. The USB-C port is a device port, so no LED bar can be attached |
-| `PRESENCE` | `yes` or `no` | An input device `gpio-keys` with the switch bit 11 (`SW_FRONT_PROXIMITY`) |
+| `PRESENCE` | `pir` or `no` | `pir` when an input device `gpio-keys` has the switch bit 11 (`SW_FRONT_PROXIMITY`). `pir` is a motion sensor: common shows the Presence sensor and no Distance sensor |
 | `LIGHT` | `yes` or `no` | An IIO device named `jsa1212` |
 
 `default.conf` holds the backlight range and the values of the light sensor.
@@ -237,12 +237,11 @@ other programs, but it still answers the ioctl.
 | `present on` | At once when the switch is 1. If `PRESENCE_WAKE` is not `off`, the program runs `tsx-blank off` |
 | `present off` | After the switch was 0 for `PRESENCE_HOLD_S` seconds (default 30). The detector adds its own 15 seconds |
 
-The file `/run/tsx/presence.state` has the lines `present`, `distance`,
-`wake`, `hold_s` and `motion`. `distance` is always `none`, because a PIR
-has no distance. `motion` is the switch without the hold. `tsx-panelctl`,
-`tsx-mqtt` and the ESPHome device read `present` and `distance`.
-`PRESENCE_DISTANCE_MM` and `PRESENCE_MIN_MM` have no effect on this board.
-Common cannot hide them for a presence sensor without a distance
+The file `/run/tsx/presence.state` has the lines `present`, `wake`, `hold_s`
+and `motion`. It has no `distance` line, because a PIR has no distance.
+`motion` is the switch without the hold. `tsx-panelctl`, `tsx-mqtt` and the
+ESPHome device read `present`. `PRESENCE=pir` in `hw.conf` makes common hide
+the Distance sensor, `PRESENCE_DISTANCE_MM` and `PRESENCE_MIN_MM`
 ([leds.md](leds.md) "Presence without a distance").
 
 `tsx-idled` opens the same input device. By the code of `tsx-idled` (not

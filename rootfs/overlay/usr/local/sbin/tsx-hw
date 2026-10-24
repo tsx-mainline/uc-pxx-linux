@@ -17,8 +17,9 @@
 #   BT=yes              the BCM4345C5 controller of the AP6256 module
 #   WIFI=yes            the BCM43456 of the AP6256 module
 #   CAMERA=no           the camera is not fitted and has no driver
-#   PRESENCE=yes|no     the PIR switch: an input device "gpio-keys" that
-#                       reports SW_FRONT_PROXIMITY (code 11)
+#   PRESENCE=pir|no     the PIR switch: an input device "gpio-keys" that
+#                       reports SW_FRONT_PROXIMITY (code 11). pir is motion
+#                       only, with no distance
 #   LIGHT=yes|no        the ambient light sensor: an IIO device "jsa1212"
 #   LEDBAR=no           the USB-C port is a device port. No USB LED bar can
 #                       be attached
@@ -72,7 +73,8 @@ has_pir() {
 yn() { if "$@"; then echo yes; else echo no; fi; }
 
 facts() {
-	presence=$(yn has_pir); light=$(yn has_light)
+	presence=no; has_pir && presence=pir
+	light=$(yn has_light)
 	echo "ORIENTATION_HW=landscape"
 	echo "MIC=yes"
 	echo "BT=yes"

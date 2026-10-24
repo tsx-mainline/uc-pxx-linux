@@ -84,7 +84,8 @@ mksys a20; rm -rf "$T/run"; : > "$T/sensors.conf"; : > "$T/wakes"; echo 0 > "$T/
 ( SW=1 EXEC=exec pres python3 -I "$PRES" ) &
 BG=$!
 sleep 0.6
-eq "$(st present)|$(st distance)|$(st motion)" "off|none|off" "no motion: present off, distance none"
+eq "$(st present)|$(st motion)" "off|off" "no motion: present off"
+[ -z "$(st distance)" ] && ok "no distance line (PRESENCE=pir needs none)" || bad "distance line: $(st distance)"
 eq "$(st wake)|$(st hold_s)" "on|30" "wake on and hold 30 s by default"
 echo 1 > "$T/sw"; sleep 0.6
 eq "$(st present)|$(st motion)" "on|on" "motion: present on at once"

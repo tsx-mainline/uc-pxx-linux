@@ -23,14 +23,14 @@ It writes /run/tsx/presence.state, the file that tsx-panelctl, tsx-mqtt and
 tsx_panel read (docs/layout.md of tsx-linux-common):
 
   present on|off     presence, with the hold
-  distance none      a PIR has no distance. The reading is always "none"
   wake on|off        PRESENCE_WAKE
   hold_s N           PRESENCE_HOLD_S
   motion on|off      the switch itself, without the hold
 
 Settings: /run/tsx/sensors.conf (PRESENCE_WAKE, PRESENCE_HOLD_S; written by
 `tsx-config apply`). PRESENCE_DISTANCE_MM and PRESENCE_MIN_MM do not apply to
-a PIR. SIGHUP reads the settings again.
+a PIR (hw.conf says PRESENCE=pir, so common hides them and the Distance
+sensor). The file has no distance line. SIGHUP reads the settings again.
 
   uc-pxx-presence           run the daemon
   uc-pxx-presence --probe   exit 0 when the PIR switch exists, else 1
@@ -232,7 +232,7 @@ class Presence:
             if self.present:
                 log("away")
             self.present = False
-        self.out("presence.state", "present %s\ndistance none\nwake %s\nhold_s %d\nmotion %s\n" % (
+        self.out("presence.state", "present %s\nwake %s\nhold_s %d\nmotion %s\n" % (
             "on" if self.present else "off", "on" if self.wake else "off", self.hold_s,
             "on" if motion else "off"))
 

@@ -42,7 +42,7 @@ fact() { sed -n "s/^$1=//p" "$T/run/hw.conf"; }
 echo "== the facts on the unit that was tested (light and PIR present) =="
 mksys "$T/sys" jsa1212 a20; mkdir -p "$T/bd"; rm -rf "$T/run"
 hw detect; eq "$?" "0" "detect: exit 0"
-eq "$(fact LIGHT)-$(fact PRESENCE)" "yes-yes" "LIGHT=yes, PRESENCE=yes"
+eq "$(fact LIGHT)-$(fact PRESENCE)" "yes-pir" "LIGHT=yes, PRESENCE=pir"
 eq "$(fact MIC)-$(fact BT)-$(fact WIFI)" "yes-yes-yes" "MIC, BT and WIFI are yes"
 eq "$(fact LEDBAR)-$(fact CAMERA)" "no-no" "LEDBAR=no, CAMERA=no"
 eq "$(fact ORIENTATION_HW)" "landscape" "ORIENTATION_HW=landscape"
@@ -52,12 +52,12 @@ grep -q '^tsx-hw: ' "$T/out" && ok "detect prints one summary line" || bad "dete
 
 echo "== a part that is missing =="
 mksys "$T/sys" "" a20; rm -rf "$T/run"; hw detect
-eq "$(fact LIGHT)-$(fact PRESENCE)" "no-yes" "no jsa1212: LIGHT=no"
+eq "$(fact LIGHT)-$(fact PRESENCE)" "no-pir" "no jsa1212: LIGHT=no"
 eq "$(fact REASON)" "no light sensor" "REASON names the light sensor"
 mksys "$T/sys" jsa1212 220; rm -rf "$T/run"; hw detect
 eq "$(fact PRESENCE)" "no" "a gpio-keys device without bit 11: PRESENCE=no"
 mksys "$T/sys" jsa1212 800; rm -rf "$T/run"; hw detect
-eq "$(fact PRESENCE)" "yes" "bit 11 only: PRESENCE=yes"
+eq "$(fact PRESENCE)" "pir" "bit 11 only: PRESENCE=pir"
 mksys "$T/sys" other a20; rm -rf "$T/run"; hw detect
 eq "$(fact LIGHT)" "no" "an IIO device with another name does not count"
 mksys "$T/sys" "" ""; rm -rf "$T/run"; hw detect

@@ -245,18 +245,19 @@ the shutter is not measured.
 
 ## Presence without a distance
 
-The PIR gives presence and no distance. Common has no way to say this today:
+The PIR gives presence and no distance. The `tsx-hw` of this board writes
+`PRESENCE=pir` to `hw.conf`. Common then does this:
 
-- The Distance sensor of the ESPHome device and of MQTT exists whenever
-  `/run/tsx/presence.state` exists. `uc-pxx-presence` writes `distance none`,
-  so the sensor shows "unknown". Without the line it would be the same.
-- The setup page and `tsx-config` hide `PRESENCE_WAKE`, `PRESENCE_DISTANCE_MM`,
-  `PRESENCE_MIN_MM` and `PRESENCE_HOLD_S` together, only for `PRESENCE=no` in
-  `hw.conf`. The xx60 has no presence sensor and uses `PRESENCE=no`.
+- The ESPHome device and MQTT have the Presence sensor and no Distance sensor.
+  `tsx-mqtt` clears the Distance discovery topic. The object ids and keys of
+  the other entities do not change.
+- The setup page and `tsx-config` use `PRESENCE_WAKE` and `PRESENCE_HOLD_S`.
+  They hide `PRESENCE_DISTANCE_MM` and `PRESENCE_MIN_MM`, and `apply` leaves
+  them out of `/run/tsx/sensors.conf`.
 
-So on this board `PRESENCE_DISTANCE_MM` and `PRESENCE_MIN_MM` show on the setup
-page and do nothing. A change in common is needed to hide them and the Distance
-sensor, for example a key `DISTANCE=no` in `hw.conf`.
+`uc-pxx-presence` writes no `distance` line. The rule is in
+`docs/layout.md` of tsx-linux-common ("Presence sensor kind"). It needs a
+tsx-linux-common version with that rule.
 
 ## Tests
 
