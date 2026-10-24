@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""uc-pxx-presence: the presence feed of the UC-P10.
+
+The unit has a PIR motion detector. The kernel shows it as a switch of the
+input device "gpio-keys": the switch SW_FRONT_PROXIMITY (EV_SW code 11). The
+value is 1 while the detector sees motion. The detector holds the 1 for about
+15 seconds after the last motion. The same input device also reports SW_DOCK
+(the handset hook) and SW_CAMERA_LENS_COVER (the camera shutter). This
+program looks only at the switch with code 11.
+
+The daemon asks for the state of the switch with the ioctl EVIOCGSW twice per
+second. It does not wait for events. tsx-idled opens every input device and
+grabs them while the screen is blank, so a program that waits for events would
+miss the motion that wakes the screen. The ioctl works with a grabbed device.
+
+Presence is "on" as soon as the switch is 1. It goes "off" when the switch has
+been 0 for PRESENCE_HOLD_S seconds (default 30), after the 15 seconds that the
+detector holds. When presence turns on and PRESENCE_WAKE is not off, the
+program wakes the screen with `tsx-blank off`, the same path as a touch.
+
+It writes /run/tsx/presence.state, the file that tsx-panelctl, tsx-mqtt and
+tsx_panel read (docs/layout.md of tsx-linux-common):
+
+  present on|off     presence, with the hold
+  distance none      a PIR has no distance. The reading is always "none"
+  wake on|off        PRESENCE_WAKE
+  hold_s N           PRESENCE_HOLD_S
+  motion on|off      the switch itself, without the hold
+
+Settings: /run/tsx/sensors.conf (PRESENCE_WAKE, PRESENCE_HOLD_S; written by
+`tsx-config apply`). PRESENCE_DISTANCE_MM and PRESENCE_MIN_MM do not apply to
+a PIR. SIGHUP reads the settings again.
+
+  uc-pxx-presence           run the daemon
+  uc-pxx-presence --probe   exit 0 when the PIR switch exists, else 1
+
+Environment overrides for tests: TSX_RUN_DIR, TSX_SENSORS_CONF, TSX_SYS_INPUT
+(in place of /sys/class/input), TSX_DEV_INPUT (in place of /dev/input),
+TSX_BLANK (the wake command), UC_PXX_PRESENCE_FAKE (a file with 0 or 1 in
+place of the ioctl), UC_PXX_PRESENCE_TICK (seconds per pass) and
+UC_PXX_PRESENCE_LOOPS (stop after this many passes).
+"""
+
+import fcntl
+import glob
+import os
+import signal
+import subprocess
+import sys
+import time
+
+SW_FRONT_PROXIMITY = 11
+INPUT_NAME = "gpio-keys"
+TICK = float(os.environ.get("UC_PXX_PRESENCE_TICK", "0.5"))
+HOLD_DEFAULT = 30
+SW_BYTES = 8
+
+
+def env(name, default):
+    return os.environ.get(name, default)
+
+
+def log(msg):
+    print("uc-pxx-presence: %s" % msg, file=sys.stderr, flush=True)
+
+
+def read_text(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fobj:
+            return fobj.read().strip()
+    except OSError:
+        return None
+
+
+def parse_conf(path):
+    """KEY=value or KEY="value" lines of a shell-style file, as a dict."""
+    out = {}
+    for line in (read_text(path) or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        val = val.split(" #", 1)[0].strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+            val = val[1:-1]
+        out[key.strip()] = val
+    return out
+
+
+def write_file(path, text, mode=0o644):
+    """Write a small file in one step, so a reader never sees half of it."""
+    tmp = "%s.tmp.%d" % (path, os.getpid())
+    try:
+        with open(tmp, "w", encoding="utf-8") as fobj:
+            fobj.write(text)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+        return True
+    except OSError as err:
+        log("cannot write %s: %s" % (path, err))
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return False
+
+
+def eviocgsw(length):
+    """The ioctl number EVIOCGSW(length) = _IOR('E', 0x1b, length)."""
+    return (2 << 30) | (length << 16) | (ord("E") << 8) | 0x1B
+
+
+def sw_bit(buf, bit):
+    """True when the bit is set in the switch bitmap (little endian bytes)."""
+    return bool(buf[bit // 8] & (1 << (bit % 8)))
+
+
+def find_pir(sys_input, dev_input):
+    """The event node of the input device "gpio-keys" that has the switch
+    SW_FRONT_PROXIMITY, or None. capabilities/sw is a hex word list. The last
+    word holds the bits 0 to 31."""
+    for path in sorted(glob.glob(os.path.join(sys_input, "input*"))):
+        if read_text(os.path.join(path, "name")) != INPUT_NAME:
+            continue
+        caps = (read_text(os.path.join(path, "capabilities", "sw")) or "").split()
+        try:
+            if not caps or not int(caps[-1], 16) & (1 << SW_FRONT_PROXIMITY):
+                continue
+        except ValueError:
+            continue
+        for ev in sorted(glob.glob(os.path.join(path, "event*"))):
+            return os.path.join(dev_input, os.path.basename(ev))
+    return None
+
+
+class Presence:
+    def __init__(self):
+        self.run = env("TSX_RUN_DIR", "/run/tsx")
+        self.conf_path = env("TSX_SENSORS_CONF", os.path.join(self.run, "sensors.conf"))
+        self.sys_input = env("TSX_SYS_INPUT", "/sys/class/input")
+        self.dev_input = env("TSX_DEV_INPUT", "/dev/input")
+        self.blank_bin = env("TSX_BLANK", "tsx-blank")
+        self.fake = os.environ.get("UC_PXX_PRESENCE_FAKE")
+        self.node = None
+        self.fd = None
+        self.reload = True
+        self.stop = False
+        self.written = {}
+        self.wake = True
+        self.hold_s = HOLD_DEFAULT
+        self.present = None           # None until the first sample
+        self.last_motion = 0.0
+        self.warned = False
+
+    def out(self, name, text):
+        """Write a /run/tsx file when its content changed."""
+        if self.written.get(name) == text:
+            return
+        if write_file(os.path.join(self.run, name), text):
+            self.written[name] = text
+
+    def load_conf(self):
+        conf = parse_conf(self.conf_path)
+        self.wake = conf.get("PRESENCE_WAKE", "on") != "off"
+        try:
+            hold = int(conf.get("PRESENCE_HOLD_S", ""))
+        except ValueError:
+            hold = HOLD_DEFAULT
+        self.hold_s = hold if 1 <= hold <= 3600 else HOLD_DEFAULT
+        log("PIR %s, wake %s, away after %d s without motion (the detector holds about 15 s more)" % (
+            self.node, "on" if self.wake else "off", self.hold_s))
+
+    def open_device(self):
+        if self.fd is not None:
+            return True
+        try:
+            self.fd = os.open(self.node, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+            return True
+        except OSError as err:
+            if not self.warned:
+                log("cannot open %s: %s" % (self.node, err))
+                self.warned = True
+            return False
+
+    def sample(self):
+        """True (motion), False (none) or None (cannot read the switch)."""
+        if self.fake:
+            raw = read_text(self.fake)
+            return {"1": True, "0": False}.get(raw)
+        if not self.open_device():
+            return None
+        try:
+            while os.read(self.fd, 4096):    # drop the queued events
+                pass
+        except OSError:
+            pass
+        buf = bytearray(SW_BYTES)
+        try:
+            fcntl.ioctl(self.fd, eviocgsw(SW_BYTES), buf, True)
+        except OSError as err:
+            log("EVIOCGSW failed: %s" % err)
+            os.close(self.fd)
+            self.fd = None
+            return None
+        self.warned = False
+        return sw_bit(buf, SW_FRONT_PROXIMITY)
+
+    def wake_screen(self):
+        try:
+            subprocess.run([self.blank_bin, "off"], check=False, timeout=3,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as err:
+            log("cannot wake the screen: %s" % err)
+
+    def step(self, now):
+        if self.reload:
+            self.reload = False
+            self.load_conf()
+        motion = self.sample()
+        if motion is None:
+            return                       # keep the state until the switch reads again
+        if motion:
+            self.last_motion = now
+            if self.present is not True:
+                first = self.present is None
+                self.present = True
+                log("motion")
+                if self.wake and not first:
+                    self.wake_screen()
+        elif self.present is not False and (self.present is None or now - self.last_motion >= self.hold_s):
+            if self.present:
+                log("away")
+            self.present = False
+        self.out("presence.state", "present %s\ndistance none\nwake %s\nhold_s %d\nmotion %s\n" % (
+            "on" if self.present else "off", "on" if self.wake else "off", self.hold_s,
+            "on" if motion else "off"))
+
+    def main(self, probe=False):
+        self.node = "fake" if self.fake else find_pir(self.sys_input, self.dev_input)
+        if probe:
+            return 0 if self.node else 1
+        os.makedirs(self.run, mode=0o755, exist_ok=True)
+        if not self.node:
+            log("no PIR switch (input device %s with the switch %d), nothing to do" % (INPUT_NAME, SW_FRONT_PROXIMITY))
+            return 0
+        signal.signal(signal.SIGHUP, lambda *_: setattr(self, "reload", True))
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, lambda *_: setattr(self, "stop", True))
+        loops = int(env("UC_PXX_PRESENCE_LOOPS", "0"))
+        count = 0
+        while not self.stop and (loops == 0 or count < loops):
+            count += 1
+            begin = time.monotonic()
+            try:
+                self.step(begin)
+            except Exception as err:  # noqa: BLE001 - one bad pass must not stop the daemon
+                log("pass failed: %r" % (err,))
+            time.sleep(max(0.0, TICK - (time.monotonic() - begin)))
+        return 0
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] not in ([], ["--probe"]):
+        print("usage: uc-pxx-presence [--probe]", file=sys.stderr)
+        sys.exit(2)
+    sys.exit(Presence().main(probe=sys.argv[1:] == ["--probe"]))

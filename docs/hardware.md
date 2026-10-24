@@ -76,9 +76,14 @@ keys from left to right. The codes must appear in the order of the table.
 
 | Sensor | Interface | Value |
 |---|---|---|
+| Presence, PIR | Input device `gpio-keys`, switch `SW_FRONT_PROXIMITY` (`EV_SW` code 11) | 1 = motion. Holds about 15 s after the last motion |
 | Ambient light, JSA1213 | IIO device `jsa1212` in `/sys/bus/iio/devices/iio:deviceN` | `in_illuminance_raw` in counts (0 to about 4000), `in_illuminance_scale` 0.5 lux for each count |
 
-Readings from the unit that we tested (2026-10-24): a room 58 counts (29
+The same `gpio-keys` device also reports `SW_DOCK` (handset hook) and
+`SW_CAMERA_LENS_COVER` (camera shutter). The service `uc-pxx-presence` turns the
+PIR into the presence state ([rootfs.md](rootfs.md) "Presence").
+
+Light readings from the unit that we tested (2026-10-24): a room 58 counts (29
 lux), covered 1 count (0.5 lux), a flashlight 138 counts (69 lux). The service
 `uc-pxx-als` turns the counts into lux and feeds the automatic brightness
 ([rootfs.md](rootfs.md) "Ambient light").

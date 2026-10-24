@@ -49,6 +49,8 @@ jobs:
         run: sh rootfs/tests/test-hw.sh
       - name: rootfs/tests/test-als.sh - uc-pxx-als and tsx-als with a made-up IIO device (python3)
         run: sh rootfs/tests/test-als.sh
+      - name: rootfs/tests/test-presence.sh - uc-pxx-presence with a made-up input device and a stub for tsx-blank (python3)
+        run: sh rootfs/tests/test-presence.sh
       - name: rootfs/tests/test-audio.sh - uc-pxx-audio with a stub amixer
         run: sh rootfs/tests/test-audio.sh
       - name: rootfs/tests/test-firmware.sh - uc-pxx-firmware with a made-up vendor folder

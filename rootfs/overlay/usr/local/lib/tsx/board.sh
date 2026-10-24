@@ -91,7 +91,7 @@ TSX_DISPLAY_ENV=${TSX_DISPLAY_ENV-}
 # So tsx-bt needs no chip file.
 TSX_BT_CHIP=${TSX_BT_CHIP:-none}
 # tsx-config apply reloads these running services when the sensor settings change.
-TSX_CONFIG_RELOAD=${TSX_CONFIG_RELOAD:-uc-pxx-als}
+TSX_CONFIG_RELOAD=${TSX_CONFIG_RELOAD:-uc-pxx-als uc-pxx-presence}
 # The address comes from the controller, so BT_MAC cannot apply.
 TSX_BT_MAC_SETTABLE=${TSX_BT_MAC_SETTABLE:-no}
 # TODO: the Bluetooth proxy is not tested on this board. Turn it on after the test.

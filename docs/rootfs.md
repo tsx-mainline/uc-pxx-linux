@@ -175,6 +175,7 @@ All services of this family start with `uc-pxx-`.
 | `uc-pxx-audio` | default | Done. Mixer defaults and volume |
 | `uc-pxx-boot-ok` | default | Starts the boot-marking hook. See [boot-control.md](boot-control.md) |
 | `uc-pxx-status-led` | default | Done. Blue heartbeat on the status LED until slot A is marked good, then solid green. See "Status LED" |
+| `uc-pxx-presence` | default | Done. Reads the PIR switch and writes the presence state. See "Presence" |
 | `uc-pxx-als` | default | Done. Reads the light sensor and feeds the automatic brightness. See "Ambient light" |
 
 ### Status LED
@@ -232,6 +233,35 @@ on|off` (the Home Assistant switch and the overlay call it) sets it and runs
 The shared module `tsx_brightness.py` (package `tsx-base`) gives the
 debounce of the light and the learning of the curve. Without it, the level
 follows the light with no debounce.
+
+### Presence
+
+The PIR motion detector is the switch `SW_FRONT_PROXIMITY` (`EV_SW`, code 11)
+of the input device `gpio-keys`. It is 1 while the detector sees motion and
+holds the 1 for about 15 seconds after the last motion. The same device also
+reports `SW_DOCK` (the handset hook) and `SW_CAMERA_LENS_COVER` (the camera
+shutter). `uc-pxx-presence` reads only the switch with code 11.
+
+The program asks for the state of the switch with the ioctl `EVIOCGSW` twice
+per second. It does not wait for events, because `tsx-idled` grabs every
+input device while the screen is blank. A grabbed device sends no events to
+other programs, but it still answers the ioctl.
+
+| State | Rule |
+|---|---|
+| `present on` | At once when the switch is 1. If `PRESENCE_WAKE` is not `off`, the program runs `tsx-blank off` |
+| `present off` | After the switch was 0 for `PRESENCE_HOLD_S` seconds (default 30). The detector adds its own 15 seconds |
+
+The file `/run/tsx/presence.state` has the lines `present`, `distance`,
+`wake`, `hold_s` and `motion`. `distance` is always `none`, because a PIR
+has no distance. `motion` is the switch without the hold. `tsx-panelctl`,
+`tsx-mqtt` and the ESPHome device read `present` and `distance`.
+`PRESENCE_DISTANCE_MM` and `PRESENCE_MIN_MM` have no effect on this board.
+
+`tsx-idled` opens the same input device. By the code of `tsx-idled` (not
+tested on the unit), every change of the switch counts as activity. So it wakes a blank screen and restarts the blank
+timeout, whatever `PRESENCE_WAKE` says. The hook and the camera shutter do the
+same.
 
 ### Firmware
 
@@ -302,6 +332,7 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 | `rootfs/tests/test-board.sh` | The board values, the board hook, the MAC address, the model, the key codes and the key LEDs |
 | `rootfs/tests/test-hw.sh` | `tsx-hw` with a made-up `/sys`: the facts and the layers of `panel-board.d` |
 | `rootfs/tests/test-als.sh` | `uc-pxx-als` and `tsx-als` with a made-up IIO device: counts to lux, the files, the backlight range, a reload |
+| `rootfs/tests/test-presence.sh` | `uc-pxx-presence` with a made-up input device: the find of the switch, the states, the wake call, a reload |
 | `rootfs/tests/test-audio.sh` | `uc-pxx-audio` with a stub `amixer` |
 | `rootfs/tests/test-firmware.sh` | `uc-pxx-firmware` with a made-up vendor folder |
 | `rootfs/tests/test-status-led.sh` | `uc-pxx-status-led` with fake LEDs and a stub for `uc-pxx-bootctl` |

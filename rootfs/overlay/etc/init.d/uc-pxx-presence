@@ -1,0 +1,36 @@
+#!/sbin/openrc-run
+# Presence feed (uc-pxx-presence). The PIR detector is the switch
+# SW_FRONT_PROXIMITY of the input device "gpio-keys". The daemon writes
+# /run/tsx/presence.state and wakes the screen on motion. `rc-service
+# uc-pxx-presence reload` reads the settings again (tsx-config apply calls it).
+description="PIR presence feed: /run/tsx/presence.state and wake on motion"
+supervisor=supervise-daemon
+command=/usr/local/sbin/uc-pxx-presence
+respawn_delay=5
+respawn_max=0
+output_log=/var/log/uc-pxx-presence.log
+error_log=/var/log/uc-pxx-presence.log
+extra_started_commands="reload"
+depend() {
+	need localmount
+	after udev-settle tsx-config tsx-idled
+	before tsx-esphome tsx-mqtt
+}
+start() {
+	checkpath -d -m 0755 /run/tsx
+	# a unit without the PIR switch: nothing to run, no failure
+	if ! /usr/local/sbin/uc-pxx-presence --probe 2>/dev/null; then
+		einfo "uc-pxx-presence: no PIR switch here, not started"
+		return 0
+	fi
+	default_start
+}
+stop() {
+	[ -e "/run/supervise-$RC_SVCNAME.pid" ] || return 0
+	default_stop
+}
+reload() {
+	ebegin "Reloading uc-pxx-presence"
+	supervise-daemon "$RC_SVCNAME" --signal HUP
+	eend $?
+}
