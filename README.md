@@ -25,7 +25,7 @@ what is open.
 |---|---|
 | Layout, CI checks, docs | Done |
 | Boot image build (`kernel/mkimage.sh`, shim) | Ported from the bring-up tree. Not run from this repository yet |
-| Kernel branch `uc-pxx-lts` | Done. `kernel/KERNEL_REV.lts` pins `ab26906e9571`. The kernel builds. Not booted from this repository |
+| Kernel branch `uc-pxx-lts` | Done. `kernel/KERNEL_REV.lts` pins `b089709a897a`. The kernel builds. Not booted from this repository |
 | Root file system build (`rootfs/`) | Ported from tsx-xx70-linux. Not run yet. The apk category `uc-pxx` does not exist yet |
 | Board files (`board.sh`, audio, buttons, fstab, inittab) | Written from the bring-up measurements. Not tested on a unit from this repository |
 | Services `uc-pxx-audio`, `uc-pxx-watchdog` | Ported. Not tested on a unit from this repository |

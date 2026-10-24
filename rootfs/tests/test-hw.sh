@@ -92,7 +92,7 @@ echo "== the real default.conf and the link =="
 rm -rf "$T/run"; BD=$O/etc/tsx/panel-board.d hw detect
 keys=$(sed -n 's/^\([A-Z_]*\)=.*/\1/p' "$T/run/panel-board.conf" | sort | tr '\n' ' ')
 eq "$keys" "ALS_SCALE ALS_WATCH AUTO_BRIGHTNESS_LUX BACKLIGHT_MAX BACKLIGHT_MIN BRIGHTNESS_DAY BRIGHTNESS_NIGHT " "default.conf: the keys"
-busybox sh -c ". '$T/run/panel-board.conf'; [ \"\$BACKLIGHT_MAX\" = 4 ] && [ \"\$BACKLIGHT_MIN\" = 1 ] && [ \"\$ALS_WATCH\" = 1 ]" && ok "default.conf sources back with the 4 backlight steps" || bad "default.conf does not source"
+busybox sh -c ". '$T/run/panel-board.conf'; [ \"\$BACKLIGHT_MAX\" = 255 ] && [ \"\$BACKLIGHT_MIN\" = 16 ] && [ \"\$BRIGHTNESS_DAY\" = 240 ] && [ \"\$BRIGHTNESS_NIGHT\" = 40 ] && [ \"\$ALS_WATCH\" = 1 ]" && ok "default.conf sources back with the 256 backlight levels" || bad "default.conf does not source"
 [ "$(readlink "$O/etc/tsx/panel-board.conf")" = /run/tsx/panel-board.conf ] && ok "/etc/tsx/panel-board.conf is a link to /run/tsx/panel-board.conf" || bad "the link is wrong"
 
 echo "$N passed, $F failed"

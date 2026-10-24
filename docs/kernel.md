@@ -11,7 +11,7 @@ the boot image.
 | LTS (default) | `uc-pxx-lts` | `v6.18.54` |
 
 `kernel/KERNEL_REV.lts` pins one revision of the branch: the 40 digit commit
-`ab26906e957143feebc45776148c5ee460e65d8c`. `ci/build-kernel.sh` fetches that
+`b089709a897a069dec3b09425557f168cd757462`. `ci/build-kernel.sh` fetches that
 commit and stops if the checkout differs from it.
 
 A stable flavor (`uc-pxx-stable`, v7.2) comes later. Develop on stable first

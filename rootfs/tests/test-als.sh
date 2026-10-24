@@ -35,7 +35,7 @@ COMMON=${TSX_COMMON_DIR:-$HERE/../../tsx-linux-common}/base/usr/local/lib/tsx
 [ -r "$COMMON/tsx_brightness.py" ] || COMMON=
 
 # setup [COUNTS [SCALE]]: a fresh fake system
-setup() {
+setup() {   # the made-up backlight has the 4 steps of the old device tree unless a test changes it
 	rm -rf "$T/sys" "$T/run" "$T/bl"
 	mkdir -p "$T/sys/iio:device0" "$T/run" "$T/bl/backlight/bl0"
 	echo jsa1212 > "$T/sys/iio:device0/name"
@@ -58,18 +58,18 @@ cp "$HERE/overlay/etc/tsx/panel-board.d/default.conf" "$T/default.conf"
 
 run_suite() {
 echo "== counts to lux: the three readings of the tested unit =="
-setup 58; cp "$T/default.conf" "$T/board.conf"; daemon; eq "$?" "0" "exit 0"
+setup 58; echo 255 > "$T/bl/backlight/bl0/max_brightness"; cp "$T/default.conf" "$T/board.conf"; daemon; eq "$?" "0" "exit 0"
 eq "$(st raw)|$(st report)|$(st counts)" "29.00|29.0|58" "room: 58 counts = 29 lux"
 eq "$(st auto)|$(st scale)" "on|1.00" "auto on while panel.conf says nothing, scale 1"
-eq "$(lvl)" "3" "room: level 3 of 1 to 4"
-setup 1; cp "$T/default.conf" "$T/board.conf"; daemon
-eq "$(st raw)|$(st counts)|$(lvl)" "0.50|1|1" "covered: 1 count = 0.5 lux, the lowest level"
-setup 138; cp "$T/default.conf" "$T/board.conf"; daemon
-eq "$(st raw)|$(st counts)|$(lvl)" "69.00|138|3" "flashlight: 138 counts = 69 lux"
-setup 4095; cp "$T/default.conf" "$T/board.conf"; daemon
-eq "$(st raw)|$(lvl)" "2047.50|4" "full scale: 4095 counts = 2047.5 lux, the top level"
-setup 0; cp "$T/default.conf" "$T/board.conf"; daemon
-eq "$(st raw)|$(lvl)" "0.00|1" "dark: 0 lux, the lowest level (never 0)"
+eq "$(lvl)" "149" "room: level 149 of 40 to 240"
+setup 1; echo 255 > "$T/bl/backlight/bl0/max_brightness"; cp "$T/default.conf" "$T/board.conf"; daemon
+eq "$(st raw)|$(st counts)|$(lvl)" "0.50|1|53" "covered: 1 count = 0.5 lux, near the night level"
+setup 138; echo 255 > "$T/bl/backlight/bl0/max_brightness"; cp "$T/default.conf" "$T/board.conf"; daemon
+eq "$(st raw)|$(st counts)|$(lvl)" "69.00|138|177" "flashlight: 138 counts = 69 lux"
+setup 4095; echo 255 > "$T/bl/backlight/bl0/max_brightness"; cp "$T/default.conf" "$T/board.conf"; daemon
+eq "$(st raw)|$(lvl)" "2047.50|240" "full scale: 4095 counts = 2047.5 lux, BRIGHTNESS_DAY"
+setup 0; echo 255 > "$T/bl/backlight/bl0/max_brightness"; cp "$T/default.conf" "$T/board.conf"; daemon
+eq "$(st raw)|$(lvl)" "0.00|40" "dark: 0 lux, BRIGHTNESS_NIGHT (never 0)"
 
 echo "== the scale =="
 setup 58 none; daemon
@@ -101,9 +101,18 @@ eq "$(lvl)" "9" "no board file: the top level is max_brightness of the device"
 setup 4095; printf 'BACKLIGHT_MAX=20\nBRIGHTNESS_DAY=20\n' > "$T/board.conf"; daemon
 eq "$(lvl)" "4" "the device limit wins over BACKLIGHT_MAX"
 setup 4095; rm -rf "$T/bl/backlight/bl0/max_brightness"; : > "$T/board.conf"; daemon
-eq "$(lvl)" "4" "no backlight device value: the 4 steps of the device tree"
+eq "$(lvl)" "255" "no backlight device value: the 255 of the backlight curve"
 setup 0; printf 'BACKLIGHT_MAX=4\nBACKLIGHT_MIN=2\nBRIGHTNESS_NIGHT=1\n' > "$T/board.conf"; daemon
 eq "$(lvl)" "2" "BACKLIGHT_MIN is the floor"
+
+echo "== the real default.conf: 256 levels, floor 16, day 240, night 40 =="
+real() {   # COUNTS: the real board file with a 255 backlight
+	setup "$1"; echo 255 > "$T/bl/backlight/bl0/max_brightness"; cp "$T/default.conf" "$T/board.conf"; LOOPS=${LOOPS:-30} daemon
+}
+real 4095; eq "$(lvl)" "240" "bright room: BRIGHTNESS_DAY 240"
+real 0; eq "$(lvl)" "40" "dark: BRIGHTNESS_NIGHT 40"
+real 58; l=$(lvl); [ "$l" -gt 40 ] && [ "$l" -lt 240 ] && ok "29 lux: a level between night and day ($l)" || bad "29 lux: level $l"
+real 1; l=$(lvl); [ "$l" -ge 16 ] && ok "0.5 lux: never below BACKLIGHT_MIN ($l)" || bad "0.5 lux: level $l"
 
 echo "== the sensor is missing or gives no number =="
 setup 58; rm -rf "$T/sys/iio:device0"; daemon; eq "$?" "0" "no device: exit 0"

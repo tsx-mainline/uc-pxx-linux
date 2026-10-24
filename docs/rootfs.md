@@ -145,9 +145,15 @@ writes two files in `/run/tsx`:
 | `LIGHT` | `yes` or `no` | An IIO device named `jsa1212` |
 
 `default.conf` holds the backlight range and the values of the light sensor.
-The backlight has five PWM levels in the device tree, so the device has the
-steps 0 to 4. `BACKLIGHT_MAX=4` and `BACKLIGHT_MIN=1` follow from that.
-Nobody has tuned these values on the glass.
+The backlight has the 256 levels of the stock curve (`max_brightness` 255).
+Level N gives the duty cycle `table[N]` of 255. The UC-P10 table runs 0, 5 ...
+225, the UC-P8 table runs 0, 4 ... 168. The levels 1 to 5 of the UC-P10 all
+give duty 5, and level 255 gives duty 225. The board values are levels, not
+duty cycles: `BACKLIGHT_MAX=255`, `BACKLIGHT_MIN=16` (duty 14, about 5 percent,
+the screen never looks off), `BRIGHTNESS_DAY=240` (the stock default level) and
+`BRIGHTNESS_NIGHT=40` (duty 35). With more than 64 levels the slider of the
+shared software uses a square scale. Nobody has tuned these values on the
+glass.
 
 ### MAC address
 
@@ -216,7 +222,7 @@ because nobody has measured the window. Measure a known light and set the
 factor in `panel.conf` (`ALS_SCALE`) or in `local.conf`. The curve of the
 automatic brightness has its top at `AUTO_BRIGHTNESS_LUX` (500 lux). It goes
 from `BRIGHTNESS_NIGHT` to `BRIGHTNESS_DAY` on a log scale. Both values are
-steps of the backlight, which has the steps 1 to 4.
+levels of the backlight, which has the levels 16 to 255.
 
 The program writes the shared files of tsx-linux-common:
 
@@ -342,7 +348,7 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 
 ## TODO
 
-- Tune the backlight steps and `ALS_SCALE` in `panel-board.d/default.conf` on
+- Tune the backlight levels and `ALS_SCALE` in `panel-board.d/default.conf` on
   the glass.
 - A data volume check for the first boot (`tsx-data` of common).
 - Chromium flags for panfrost (`TSX_BROWSER_GL_FLAGS`).
