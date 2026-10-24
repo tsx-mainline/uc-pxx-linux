@@ -1,14 +1,36 @@
 #!/sbin/openrc-run
-# Ambient light feed (uc-pxx-als). The JSA1213 sensor appears as an IIO device.
-# The program reads it and writes the light level for the automatic
-# brightness.
-# TODO: the program is a stub. When it is a daemon, run it with supervise-daemon.
+# Ambient light feed (uc-pxx-als). The JSA1213 sensor appears as the IIO device
+# "jsa1212". The daemon reads it and writes /run/tsx/als.state and
+# /run/tsx/als-level for the automatic brightness. `rc-service uc-pxx-als
+# reload` reads the settings again (tsx-config apply calls it).
 description="Ambient light sensor feed for the automatic brightness"
-depend() { need localmount; after udev-settle tsx-config; }
+supervisor=supervise-daemon
+command=/usr/local/sbin/uc-pxx-als
+respawn_delay=5
+respawn_max=0
+output_log=/var/log/uc-pxx-als.log
+error_log=/var/log/uc-pxx-als.log
+extra_started_commands="reload"
+depend() {
+	need localmount
+	after udev-settle tsx-config
+	before tsx-idled tsx-esphome tsx-mqtt
+}
 start() {
-	ebegin "Ambient light feed"
-	/usr/local/sbin/uc-pxx-als start 2>&1 | while read -r l; do
-		einfo "  $l"
-	done
-	eend 0
+	checkpath -d -m 0755 /run/tsx
+	# a unit without the sensor: nothing to run, no failure
+	if ! /usr/local/sbin/uc-pxx-als --probe 2>/dev/null; then
+		einfo "uc-pxx-als: no light sensor here, not started"
+		return 0
+	fi
+	default_start
+}
+stop() {
+	[ -e "/run/supervise-$RC_SVCNAME.pid" ] || return 0
+	default_stop
+}
+reload() {
+	ebegin "Reloading uc-pxx-als"
+	supervise-daemon "$RC_SVCNAME" --signal HUP
+	eend $?
 }

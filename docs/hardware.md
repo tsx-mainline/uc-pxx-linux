@@ -18,7 +18,7 @@ mainline kernel. The state comes from the bring-up work on one unit.
 | Network | GMAC to an RTL8364B switch (LAN port and PC port) |
 | Wi-Fi and Bluetooth | AP6256: BCM43456 on SDIO, BCM4345C5 on UART |
 | USB | USB-C device port with a fusb302 |
-| Light sensor | JSA1213, driver `jsa1212` |
+| Light sensor | JSA1213, driver `jsa1212` ([Sensors](#sensors)) |
 | Not fitted | TAS5825M amplifier and OV2735 camera (the device tree nodes exist) |
 
 ## Audio
@@ -71,6 +71,17 @@ This needs a tsx-linux-common that has `LED_MODE=onoff`.
 
 To verify the order, run `evtest` on the touch input device and press the
 keys from left to right. The codes must appear in the order of the table.
+
+## Sensors
+
+| Sensor | Interface | Value |
+|---|---|---|
+| Ambient light, JSA1213 | IIO device `jsa1212` in `/sys/bus/iio/devices/iio:deviceN` | `in_illuminance_raw` in counts (0 to about 4000), `in_illuminance_scale` 0.5 lux for each count |
+
+Readings from the unit that we tested (2026-10-24): a room 58 counts (29
+lux), covered 1 count (0.5 lux), a flashlight 138 counts (69 lux). The service
+`uc-pxx-als` turns the counts into lux and feeds the automatic brightness
+([rootfs.md](rootfs.md) "Ambient light").
 
 ## Network identity
 

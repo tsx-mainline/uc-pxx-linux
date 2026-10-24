@@ -1,0 +1,21 @@
+#!/bin/sh
+# tsx-als auto on|off | status: the automatic backlight.
+#
+# The shared software calls this name (tsx-panelctl, the Home Assistant "Auto
+# brightness" switch and the overlay). "auto" changes AUTO_BRIGHTNESS in
+# panel.conf and applies it. tsx-config apply writes /run/tsx/sensors.conf and
+# reloads uc-pxx-als (TSX_CONFIG_RELOAD in board.sh), which then writes or
+# removes /run/tsx/als-level. "status" shows the state that uc-pxx-als writes.
+#
+# Env overrides for tests: TSX_CONFIG_BIN, TSX_RUN_DIR.
+CONFIG=${TSX_CONFIG_BIN:-tsx-config}
+R=${TSX_RUN_DIR:-/run/tsx}
+case "${1:-status}" in
+auto)
+	case "${2:-}" in
+	on|off) "$CONFIG" set AUTO_BRIGHTNESS "$2" && "$CONFIG" apply;;
+	*) echo "usage: tsx-als auto on|off" >&2; exit 2;;
+	esac;;
+status) cat "$R/als.state" 2>/dev/null || { echo "no ambient light sensor" >&2; exit 1; };;
+*) echo "usage: tsx-als auto on|off | status" >&2; exit 2;;
+esac

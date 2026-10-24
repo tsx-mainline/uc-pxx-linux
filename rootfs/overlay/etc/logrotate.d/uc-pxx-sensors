@@ -1,0 +1,8 @@
+/var/log/uc-pxx-als.log /var/log/uc-pxx-presence.log {
+	size 1M
+	rotate 2
+	compress
+	missingok
+	notifempty
+	copytruncate
+}

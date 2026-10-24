@@ -175,7 +175,7 @@ All services of this family start with `uc-pxx-`.
 | `uc-pxx-audio` | default | Done. Mixer defaults and volume |
 | `uc-pxx-boot-ok` | default | Starts the boot-marking hook. See [boot-control.md](boot-control.md) |
 | `uc-pxx-status-led` | default | Done. Blue heartbeat on the status LED until slot A is marked good, then solid green. See "Status LED" |
-| `uc-pxx-als` | default | Stub. The light sensor feed is not written |
+| `uc-pxx-als` | default | Done. Reads the light sensor and feeds the automatic brightness. See "Ambient light" |
 
 ### Status LED
 
@@ -198,6 +198,40 @@ boot-marking hook light red when the A/B state is unknown
 
 After `uc-pxx-arm-slot` armed slot A in a running system, the LED stays as it
 is until the next boot. The next boot starts the program again.
+
+### Ambient light
+
+`uc-pxx-als` reads the JSA1213 through the mainline driver `jsa1212`. The
+driver shows the sensor as the IIO device `jsa1212` with `in_illuminance_raw`
+(counts, 0 to about 4000) and `in_illuminance_scale` (0.5).
+
+The program turns the counts into lux: `lux = counts x in_illuminance_scale x
+ALS_SCALE`. The range is 0 to about 2000 lux in steps of 0.5 lux. The unit
+that we tested read 58 counts (29 lux) in a room, 1 count (0.5 lux) when
+covered and 138 counts (69 lux) with a flashlight.
+
+`ALS_SCALE` corrects for the front window. It is 1 in `panel-board.d/default.conf`
+because nobody has measured the window. Measure a known light and set the
+factor in `panel.conf` (`ALS_SCALE`) or in `local.conf`. The curve of the
+automatic brightness has its top at `AUTO_BRIGHTNESS_LUX` (500 lux). It goes
+from `BRIGHTNESS_NIGHT` to `BRIGHTNESS_DAY` on a log scale. Both values are
+steps of the backlight, which has the steps 1 to 4.
+
+The program writes the shared files of tsx-linux-common:
+
+| File | Content | Read by |
+|---|---|---|
+| `/run/tsx/als.state` | `raw` (lux), `report` (lux with a deadband), `auto`, `scale`, `learned`, `counts` | `tsx-panelctl`, `tsx-mqtt`, `tsx_panel`, the overlay |
+| `/run/tsx/als-level` | The backlight level, while `AUTO_BRIGHTNESS` is on | `tsx-idled` |
+
+`AUTO_BRIGHTNESS` is on while `panel.conf` does not set it. `tsx-als auto
+on|off` (the Home Assistant switch and the overlay call it) sets it and runs
+`tsx-config apply`. The apply reloads `uc-pxx-als` (`TSX_CONFIG_RELOAD`).
+`ALS_WATCH=1` in `default.conf` makes `tsx-idled` apply a new level at once.
+
+The shared module `tsx_brightness.py` (package `tsx-base`) gives the
+debounce of the light and the learning of the curve. Without it, the level
+follows the light with no debounce.
 
 ### Firmware
 
@@ -267,6 +301,7 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 | `rootfs/tests/test-profiles.sh` | The package, service and image file lists of the profiles |
 | `rootfs/tests/test-board.sh` | The board values, the board hook, the MAC address, the model, the key codes and the key LEDs |
 | `rootfs/tests/test-hw.sh` | `tsx-hw` with a made-up `/sys`: the facts and the layers of `panel-board.d` |
+| `rootfs/tests/test-als.sh` | `uc-pxx-als` and `tsx-als` with a made-up IIO device: counts to lux, the files, the backlight range, a reload |
 | `rootfs/tests/test-audio.sh` | `uc-pxx-audio` with a stub `amixer` |
 | `rootfs/tests/test-firmware.sh` | `uc-pxx-firmware` with a made-up vendor folder |
 | `rootfs/tests/test-status-led.sh` | `uc-pxx-status-led` with fake LEDs and a stub for `uc-pxx-bootctl` |
@@ -279,7 +314,6 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 - Tune the backlight steps and `ALS_SCALE` in `panel-board.d/default.conf` on
   the glass.
 - A data volume check for the first boot (`tsx-data` of common).
-- The light sensor feed (`uc-pxx-als`).
 - Chromium flags for panfrost (`TSX_BROWSER_GL_FLAGS`).
 - The Bluetooth proxy default (`TSX_BT_PROXY_DEFAULT` is `off` until tested).
 - The initramfs and the rescue system.

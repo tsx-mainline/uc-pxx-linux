@@ -1,21 +1,437 @@
-#!/bin/sh
-# uc-pxx-als start | status: the ambient light feed of the UC-P10.
-#
-# The light sensor is a JSA1213. The kernel driver jsa1212 shows it as an IIO
-# device (name jsa1212, value in_illuminance_input). The automatic brightness
-# of the panel needs the light level in lux.
-#
-# TODO: this is a stub. It reads nothing. The real program must do this:
-#   1. Find the IIO device with the name jsa1212.
-#   2. Read the illuminance at ALS_PERIOD_S intervals.
-#   3. Write the level in the form that the shared brightness control reads
-#      (the tsx-sensord of the xx70 writes /run/tsx/als.state and als-level).
-#      Check tsx-linux-common for the current interface.
-#   4. Apply ALS_SCALE from panel-board.conf.
-set -eu
-say() { echo "uc-pxx-als: $*"; }
-case "${1:-status}" in
-start|status) say "stub: no light feed yet";;
-*) echo "usage: uc-pxx-als start | status" >&2; exit 2;;
-esac
-exit 0
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""uc-pxx-als: the ambient light feed of the UC-P10.
+
+The light sensor is a JSA1213. The mainline driver jsa1212 shows it as the
+IIO device "jsa1212". The daemon reads in_illuminance_raw (counts, 0 to about
+4000) and turns it into lux:
+
+    lux = counts x in_illuminance_scale x ALS_SCALE
+
+in_illuminance_scale is 0.5 lux for each count (the sysfs file of the driver).
+ALS_SCALE corrects for the front window. It is 1 until somebody measures the
+window. Values on the unit that was tested: a room 58 counts (29 lux), covered
+1 count (0.5 lux), a flashlight 138 counts (69 lux).
+
+The daemon writes the files that the shared software of tsx-linux-common
+reads (docs/layout.md, docs/adaptive-brightness.md):
+
+  /run/tsx/als.state   "raw LUX", "report LUX" (with a deadband, for Home
+                       Assistant), "auto on|off", "scale S", "learned N" and
+                       "counts N" (the sensor value before the scale)
+  /run/tsx/als-level   the backlight level for tsx-idled, while AUTO_BRIGHTNESS
+                       is on. The file is written when the level changes and
+                       every 10 s, because tsx-idled uses it only while it is
+                       less than 30 s old. The board file sets ALS_WATCH=1, so
+                       tsx-idled applies a change at once.
+
+The level follows the light on a log curve from BRIGHTNESS_NIGHT (dark) to
+BRIGHTNESS_DAY (at AUTO_BRIGHTNESS_LUX). The light has its own times and bands
+for brighter and darker (tsx_brightness.LightResponse). A manual change that
+the user holds for a few seconds becomes a point of the curve
+(tsx_brightness.Learner). The module tsx_brightness.py comes from the package
+tsx-base. Without it, the level follows the light with no debounce and
+nothing is learned.
+
+Settings: /run/tsx/sensors.conf (AUTO_BRIGHTNESS, ALS_SCALE; written by
+`tsx-config apply`), then /etc/kiosk.conf, then /etc/tsx/panel-board.conf
+(the board layer wins over kiosk.conf). SIGHUP reads them again.
+AUTO_BRIGHTNESS is on while panel.conf does not set it. The backlight range
+(BACKLIGHT_MAX, BACKLIGHT_MIN) comes from the board file, else from
+max_brightness of the backlight device.
+
+  uc-pxx-als           run the daemon
+  uc-pxx-als --probe   exit 0 when the light sensor exists, else 1
+
+Environment overrides for tests: TSX_RUN_DIR, TSX_SENSORS_CONF,
+TSX_KIOSK_CONF, TSX_PANEL_BOARD_CONF, TSX_IIO_DIR, TSX_BACKLIGHT_DIR,
+TSX_LIB_DIR (the folder of tsx_brightness.py), TSX_LEARN_FILE,
+TSX_LEARN_HOLD_S, TSX_IDLED_STATE, UC_PXX_ALS_TICK (seconds per pass) and
+UC_PXX_ALS_LOOPS (stop after this many passes and leave the files).
+"""
+
+import glob
+import math
+import os
+import signal
+import sys
+import time
+
+sys.path.insert(0, os.environ.get("TSX_LIB_DIR", "/usr/local/lib/tsx"))
+try:
+    import tsx_brightness
+except ImportError:          # no learning, and no debounce of the light
+    tsx_brightness = None
+
+IIO_NAME = "jsa1212"
+SENSOR_SCALE = 0.5            # lux for each count, when the driver gives no scale
+TICK = float(os.environ.get("UC_PXX_ALS_TICK", "0.1"))
+ALS_PERIOD = 0.5              # seconds between reads (ALS_PERIOD_S changes it)
+ALS_PERIOD_MIN = 0.2
+ALS_HEARTBEAT = 10.0          # write als-level this often (tsx-idled wants < 30 s)
+ALS_DEAD = 20.0               # stop writing als-level after this long without a read
+LUX_REPORT_FRAC = 0.05        # report a new lux value after this change
+LUX_REPORT_MIN = 1.0
+AUTO_LUX_FULL = 500           # lux for BRIGHTNESS_DAY
+AUTO_HYST = 0.04              # share of the level range that must differ to move
+MIN_SHARE = 0.03              # BACKLIGHT_MIN: this share of BACKLIGHT_MAX
+LAST_RESORT_MAX = 4           # the top step of the device tree backlight
+AUTO_BRIGHTEN_S = tsx_brightness.BRIGHTEN_S if tsx_brightness else 0.0
+AUTO_DARKEN_S = tsx_brightness.DARKEN_S if tsx_brightness else 0.0
+AUTO_BRIGHTEN_BAND = tsx_brightness.BRIGHTEN_BAND if tsx_brightness else 0.0
+AUTO_DARKEN_BAND = tsx_brightness.DARKEN_BAND if tsx_brightness else 0.0
+
+
+def env(name, default):
+    return os.environ.get(name, default)
+
+
+def log(msg):
+    print("uc-pxx-als: %s" % msg, file=sys.stderr, flush=True)
+
+
+def read_text(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fobj:
+            return fobj.read().strip()
+    except OSError:
+        return None
+
+
+def read_float(path):
+    raw = read_text(path)
+    try:
+        return float(raw.split()[0]) if raw else None
+    except (ValueError, IndexError):
+        return None
+
+
+def parse_conf(path):
+    """KEY=value or KEY="value" lines of a shell-style file, as a dict."""
+    out = {}
+    for line in (read_text(path) or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        val = val.split(" #", 1)[0].strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+            val = val[1:-1]
+        out[key.strip()] = val
+    return out
+
+
+def conf_int(conf, key, default, lo, hi):
+    try:
+        val = int(conf.get(key, ""))
+    except ValueError:
+        return default
+    return val if lo <= val <= hi else default
+
+
+def conf_float(conf, key, lo, hi):
+    """A float setting in [lo, hi], or None when unset or out of range."""
+    try:
+        val = float(conf.get(key, ""))
+    except ValueError:
+        return None
+    return val if lo <= val <= hi else None
+
+
+def write_file(path, text, mode=0o644):
+    """Write a small file in one step, so a reader never sees half of it."""
+    tmp = "%s.tmp.%d" % (path, os.getpid())
+    try:
+        with open(tmp, "w", encoding="utf-8") as fobj:
+            fobj.write(text)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+        return True
+    except OSError as err:
+        log("cannot write %s: %s" % (path, err))
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return False
+
+
+def find_iio(iio_dir, name):
+    for path in sorted(glob.glob(os.path.join(iio_dir, "iio:device*"))):
+        if read_text(os.path.join(path, "name")) == name:
+            return path
+    return None
+
+
+def device_max(bl_dir):
+    """max_brightness of the first backlight device, or None."""
+    for path in sorted(glob.glob(os.path.join(bl_dir, "*"))):
+        raw = read_text(os.path.join(path, "max_brightness"))
+        if raw and raw.isdigit() and int(raw) > 0:
+            return int(raw)
+    return None
+
+
+class PlainResponse:
+    """The light with no debounce. It stands in when tsx_brightness.py is
+    missing."""
+
+    def __init__(self, *_args, **_kw):
+        self.held = self.live = None
+
+    def feed(self, _now, x):
+        self.held = self.live = x
+        return x
+
+    def pending(self):
+        return False
+
+    def reset(self, held=None):
+        self.held, self.live = held, None
+
+
+class AutoBrightness:
+    """Lux to a backlight level. The level range is `lo` at 0 lux to `hi` at
+    `lux_full`, on a log curve. User points can bend the curve
+    (tsx_brightness.Curve). The held light (LightResponse) follows the real
+    light after the brighten time or the darken time. The level takes the
+    curve value when it is more than the hysteresis away from the level.
+    tsx-idled ramps the change on the glass. No level goes below `lmin`."""
+
+    def __init__(self, lo, hi, lux_full=AUTO_LUX_FULL, lmin=1, brighten_s=None, darken_s=None,
+                 up_band=None, down_band=None):
+        if lo > hi:
+            lo, hi = hi, lo
+        self.lmin = max(1, lmin)
+        self.lo, self.hi = max(self.lmin, lo), max(self.lmin, hi)
+        self.full = math.log10(1.0 + lux_full)
+        self.curve = None
+        if tsx_brightness:
+            self.curve = tsx_brightness.Curve(tsx_brightness.log_ramp(self.lo, self.hi, lux_full), self.lmin, self.hi)
+            self.resp = tsx_brightness.LightResponse(
+                AUTO_BRIGHTEN_S if brighten_s is None else brighten_s,
+                AUTO_DARKEN_S if darken_s is None else darken_s,
+                AUTO_BRIGHTEN_BAND if up_band is None else up_band,
+                AUTO_DARKEN_BAND if down_band is None else down_band)
+        else:
+            self.resp = PlainResponse()
+        self.level = None
+
+    @property
+    def smooth(self):
+        """The held light in x = log10(1 + lux)."""
+        return self.resp.held
+
+    @smooth.setter
+    def smooth(self, value):
+        self.resp.reset(value)
+
+    @property
+    def live(self):
+        """The newest light in x, before the debounce."""
+        return self.resp.live
+
+    def feed(self, lux, now):
+        self.resp.feed(now, math.log10(1.0 + max(0.0, lux)))
+
+    def target(self):
+        frac = min(1.0, max(0.0, self.smooth / self.full))
+        if frac < 0.02 or frac > 0.98:     # the ends are reachable, not approached forever
+            frac = round(frac)
+        if self.curve:
+            lvl = int(round(self.curve.level_at(frac * self.full)))
+        else:
+            lvl = self.lo + int(round(frac * (self.hi - self.lo)))
+        return max(self.lmin, min(self.hi, lvl))
+
+    def snap(self):
+        """Move to the target at once (the curve changed by a user point)."""
+        if self.smooth is not None:
+            self.level = self.target()
+
+    def tick(self):
+        """The level now. Returns None before the first light value."""
+        if self.smooth is None:
+            return None
+        span = self.hi - self.lo
+        tgt = self.target()
+        if self.level is None:
+            self.level = tgt
+        elif abs(tgt - self.level) > max(1, AUTO_HYST * span) or (tgt in (self.lo, self.hi) and tgt != self.level):
+            self.level = tgt
+        return self.level
+
+
+class Als:
+    def __init__(self):
+        self.run = env("TSX_RUN_DIR", "/run/tsx")
+        self.conf_path = env("TSX_SENSORS_CONF", os.path.join(self.run, "sensors.conf"))
+        self.kiosk_conf = env("TSX_KIOSK_CONF", "/etc/kiosk.conf")
+        self.board_conf = env("TSX_PANEL_BOARD_CONF", "/etc/tsx/panel-board.conf")
+        self.iio_dir = env("TSX_IIO_DIR", "/sys/bus/iio/devices")
+        self.bl_dir = env("TSX_BACKLIGHT_DIR", "/sys/class/backlight")
+        self.idled_state = env("TSX_IDLED_STATE", "/run/tsx-idled.state")
+        self.dev = None
+        self.reload = True
+        self.stop = False
+        self.written = {}
+        self.lux_scale = 1.0
+        self.auto = True
+        self.ab = None
+        self.learner = None
+        self.learn_on = False
+        self.period = ALS_PERIOD
+        self.counts = None
+        self.lux_raw = None
+        self.lux_rep = None
+        self.lux_at = -1e9
+        self.lux_ok_at = -1e9
+        self.level_at = -1e9
+        self.level_out = None
+        self.warned = False
+
+    # -- files
+    def out(self, name, text):
+        """Write a /run/tsx file when its content changed."""
+        if self.written.get(name) == text:
+            return
+        if write_file(os.path.join(self.run, name), text):
+            self.written[name] = text
+
+    def drop(self, name):
+        if name in self.written or os.path.exists(os.path.join(self.run, name)):
+            try:
+                os.unlink(os.path.join(self.run, name))
+            except OSError:
+                pass
+        self.written.pop(name, None)
+
+    # -- settings
+    def load_conf(self):
+        conf = parse_conf(self.conf_path)
+        kiosk = parse_conf(self.kiosk_conf)
+        kiosk.update(parse_conf(self.board_conf))      # the board layer wins
+        scale = conf_float(conf, "ALS_SCALE", 0.01, 1000.0)       # panel.conf wins
+        if scale is None:
+            scale = conf_float(kiosk, "ALS_SCALE", 0.01, 1000.0)
+        self.lux_scale = 1.0 if scale is None else scale
+        self.auto = conf.get("AUTO_BRIGHTNESS", "on") != "off"
+        dev_max = device_max(self.bl_dir)
+        cap = conf_int(kiosk, "BACKLIGHT_MAX", dev_max or LAST_RESORT_MAX, 1, 1000000)
+        if dev_max:
+            cap = min(cap, dev_max)                    # the device limit wins
+        day = min(cap, conf_int(kiosk, "BRIGHTNESS_DAY", cap, 1, 1000000))
+        night = min(cap, conf_int(kiosk, "BRIGHTNESS_NIGHT", 1, 1, 1000000))
+        full = conf_int(kiosk, "AUTO_BRIGHTNESS_LUX", AUTO_LUX_FULL, 10, 100000)
+        lmin = conf_int(kiosk, "BACKLIGHT_MIN", max(1, int(round(MIN_SHARE * cap))), 1, cap)
+        keep = self.ab.smooth if self.ab else None
+        self.ab = AutoBrightness(
+            night, day, full, lmin,
+            conf_float(kiosk, "AUTO_BRIGHTEN_S", 0.0, 120.0),
+            conf_float(kiosk, "AUTO_DARKEN_S", 0.0, 600.0),
+            conf_float(kiosk, "AUTO_BRIGHTEN_BAND", 0.0, 1.0),
+            conf_float(kiosk, "AUTO_DARKEN_BAND", 0.0, 1.0))
+        self.ab.smooth = keep
+        per = conf_float(kiosk, "ALS_PERIOD_S", ALS_PERIOD_MIN, 60.0)
+        self.period = ALS_PERIOD if per is None else per
+        self.learner = None
+        self.learn_on = False
+        if tsx_brightness and self.ab.curve:
+            self.learner = tsx_brightness.Learner(
+                self.ab.curve, env("TSX_LEARN_FILE", "/data/tsx/brightness-learn.json"), self.run,
+                float(env("TSX_LEARN_HOLD_S", str(tsx_brightness.HOLD_S))))
+            self.learn_on = kiosk.get("BRIGHTNESS_LEARN", "on") != "off"
+            if self.learn_on:
+                self.learner.load()
+        self.level_out = None
+        if not self.auto:
+            self.drop("als-level")
+        log("light scale %.2f, auto brightness %s (%d..%d, full at %d lux), read every %.1f s" % (
+            self.lux_scale, "on" if self.auto else "off", self.ab.lo, self.ab.hi, full, self.period))
+
+    # -- sensor
+    def read_lux(self):
+        """Lux, or None when the sensor gives no number. Sets self.counts."""
+        counts = read_float(os.path.join(self.dev, "in_illuminance_raw"))
+        if counts is None or counts < 0:
+            return None
+        self.counts = counts
+        per_count = read_float(os.path.join(self.dev, "in_illuminance_scale"))
+        if not per_count or per_count <= 0:
+            per_count = SENSOR_SCALE
+        return counts * per_count * self.lux_scale
+
+    def step(self, now):
+        if self.reload:
+            self.reload = False
+            self.load_conf()
+        if now - self.lux_at >= self.period:
+            self.lux_at = now
+            lux = self.read_lux()
+            if lux is not None:
+                self.lux_raw = lux
+                self.lux_ok_at = now
+                if self.lux_rep is None or abs(lux - self.lux_rep) >= max(LUX_REPORT_MIN, LUX_REPORT_FRAC * self.lux_rep):
+                    self.lux_rep = lux
+                self.ab.feed(lux, now)
+        learned = len(self.learner.curve.user) if self.learner else 0
+        self.out("als.state", "raw %.2f\nreport %s\nauto %s\nscale %.2f\nlearned %d\ncounts %d\n" % (
+            self.lux_raw or 0.0, "%.1f" % self.lux_rep if self.lux_rep is not None else "0",
+            "on" if self.auto else "off", self.lux_scale, learned, int(self.counts or 0)))
+        if self.learner and self.learner.reset_requested():
+            self.ab.snap()
+            self.level_out = None
+        if not self.auto:
+            return
+        if now - self.lux_ok_at > ALS_DEAD:
+            return                      # no light value: als-level goes stale, tsx-idled uses the schedule
+        learned_now = False
+        if self.learner and self.learn_on and self.ab.smooth is not None:
+            screen_on = (read_text(self.idled_state) or "").split()[:1] == ["on"]
+            if self.learner.poll(now, self.ab.smooth, screen_on, self.ab.live):
+                learned_now = True
+                self.ab.snap()
+                self.level_out = None
+                log("learned a point: %d at %.1f lux (%s)" % (
+                    self.ab.level, tsx_brightness.x_to_lux(self.ab.smooth), self.learner.info))
+        level = self.ab.tick()
+        if level is None:
+            return
+        if level != self.level_out or now - self.level_at >= ALS_HEARTBEAT:
+            if write_file(os.path.join(self.run, "als-level"), "%d\n" % level):
+                self.level_out, self.level_at = level, now
+        if learned_now:
+            self.learner.release()
+
+    def main(self, probe=False):
+        self.dev = find_iio(self.iio_dir, IIO_NAME)
+        if probe:
+            return 0 if self.dev else 1
+        os.makedirs(self.run, mode=0o755, exist_ok=True)
+        if not self.dev:
+            log("no IIO device %s, nothing to do" % IIO_NAME)
+            return 0
+        log("light sensor %s" % self.dev)
+        signal.signal(signal.SIGHUP, lambda *_: setattr(self, "reload", True))
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, lambda *_: setattr(self, "stop", True))
+        loops = int(env("UC_PXX_ALS_LOOPS", "0"))
+        count = 0
+        while not self.stop and (loops == 0 or count < loops):
+            count += 1
+            begin = time.monotonic()
+            try:
+                self.step(begin)
+            except Exception as err:  # noqa: BLE001 - one bad pass must not stop the daemon
+                log("pass failed: %r" % (err,))
+            time.sleep(max(0.0, TICK - (time.monotonic() - begin)))
+        if not loops:                   # a test run (UC_PXX_ALS_LOOPS) leaves the files
+            self.drop("als-level")      # tsx-idled then uses the schedule at once
+        return 0
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] not in ([], ["--probe"]):
+        print("usage: uc-pxx-als [--probe]", file=sys.stderr)
+        sys.exit(2)
+    sys.exit(Als().main(probe=sys.argv[1:] == ["--probe"]))
