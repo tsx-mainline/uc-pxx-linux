@@ -29,8 +29,8 @@ what is open.
 | Root file system build (`rootfs/`) | Ported from tsx-xx70-linux. Not run yet. The apk category `uc-pxx` does not exist yet |
 | Board files (`board.sh`, audio, buttons, fstab, inittab) | Written from the bring-up measurements. Not tested on a unit from this repository |
 | Services `uc-pxx-audio`, `uc-pxx-watchdog` | Ported. Not tested on a unit from this repository |
-| Services `uc-pxx-boot-ok`, `uc-pxx-firmware`, `uc-pxx-switch`, `uc-pxx-als` | Stubs with TODO markers |
-| A/B boot control and flash wrapper | Open, see [boot-control.md](docs/boot-control.md) |
+| Services `uc-pxx-firmware`, `uc-pxx-switch`, `uc-pxx-als` | Stubs with TODO markers |
+| A/B boot control, flash wrapper and arm helper | Renamed from the reviewed bring-up tools. Needs a review of the exact files, see [boot-control.md](docs/boot-control.md) |
 | Initramfs and rescue | Open |
 | Installer | Open, see [install.md](docs/install.md) |
 

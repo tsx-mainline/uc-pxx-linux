@@ -47,6 +47,11 @@
 #                          while the Sendspin player owns the volume
 #   TSX_RESCUE_BACKLIGHT   percent of max_brightness that the rescue system
 #                          sets at start (default 50, at most 80)
+#   TSX_PRE_UPDATE_HOOK    a command that tsx-autoupdate must run BEFORE it
+#                          changes the system. It arms slot A to "trying", so a
+#                          bad update falls back to slot B (docs/boot-control.md).
+#                          PLACEHOLDER: the name and the call of the hook in
+#                          common are not final (TODO).
 #   TSX_CONFIG_RELOAD      services that tsx-config apply reloads when the
 #                          sensor settings change
 #
@@ -98,6 +103,8 @@ TSX_BROWSER_GL_FLAGS=${TSX_BROWSER_GL_FLAGS-}
 TSX_VOLUME_CMD=${TSX_VOLUME_CMD:-uc-pxx-audio volume}
 TSX_VOLUME_FIXED_CMD=${TSX_VOLUME_FIXED_CMD-uc-pxx-audio fixed}
 TSX_RESCUE_BACKLIGHT=${TSX_RESCUE_BACKLIGHT:-50}
+# Placeholder name, see the list of variables above.
+TSX_PRE_UPDATE_HOOK=${TSX_PRE_UPDATE_HOOK:-/usr/sbin/uc-pxx-arm-slot}
 
 # tsx_board_load: the board keeps no key/value store. Nothing to read.
 tsx_board_load() { return 0; }

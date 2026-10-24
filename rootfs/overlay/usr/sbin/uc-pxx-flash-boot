@@ -1,0 +1,65 @@
+#!/bin/sh
+# uc-pxx-flash-boot IMAGE SHA256 — flash a new mainline image into boot_a from the running mainline,
+# the safe way: re-arm slot A to "trying" FIRST, so a broken image runs down its tries and U-Boot
+# falls back to slot B, instead of looping forever on a "successful" slot A.
+# Holds /run/uc-pxx-abdata.lock for the whole flash so the boot-marking hook can't race it (F1).
+set -u
+IMG=${1:?usage: uc-pxx-flash-boot IMAGE SHA256}
+WANT=${2:?usage: uc-pxx-flash-boot IMAGE SHA256}
+DEV=/dev/mmcblk0p13
+
+say() { echo "uc-pxx-flash-boot: $*" >&2; echo "uc-pxx-flash-boot: $*" > /dev/kmsg; }
+die() { say "$*"; exit 1; }
+unknown() {
+	say "!!! A/B STATE UNKNOWN - DO NOT REBOOT - inspect LBA 49156 by hand !!! ($*)"
+	echo 1 > /sys/class/leds/red/brightness 2>/dev/null
+	exit 3
+}
+# arm slot A trying and prove the exact state A{15,7,0}; rc 3 from the tool = state unknown
+arm() {
+	/usr/sbin/uc-pxx-bootctl arm-trying --slot a
+	rc=$?
+	[ $rc -eq 3 ] && unknown "arm-trying rc 3"
+	[ $rc -eq 0 ] || die "arm-trying refused/failed (rc $rc) $1"
+	/usr/sbin/uc-pxx-bootctl status 2>&1 | grep -q "current: A{prio 15 tries 7 succ 0}" || \
+		die "slot A is not exactly {15,7,0} after arming $1"
+}
+
+grep -q "PARTNAME=boot_a" /sys/class/block/mmcblk0p13/uevent || die "mmcblk0p13 is not boot_a"
+SIZE=$(stat -c %s "$IMG") || die "cannot stat $IMG"
+[ "$SIZE" -le $((64 * 1024 * 1024)) ] || die "image larger than 64 MiB"
+[ "$(head -c 8 "$IMG")" = "ANDROID!" ] || die "not an Android boot image"
+NAME=$(dd if="$IMG" bs=1 skip=48 count=16 2>/dev/null | tr -d '\000')
+[ -n "$NAME" ] || die "image has no build token in its header name field (M2)"
+GOT=$(sha256sum "$IMG" | cut -c1-64)
+[ "$GOT" = "$WANT" ] || die "sha256 mismatch: $GOT"
+
+exec 9>/run/uc-pxx-abdata.lock
+i=0   # busybox flock has no -w: poll for up to 600 s
+until flock -n 9; do i=$((i + 1)); [ $i -ge 600 ] && die "could not take the A/B lock"; sleep 1; done
+: > /run/uc-pxx-slot-a-changed
+
+# 1. arm slot A trying (B must be successful; B untouched). Never flash without this.
+arm "(before flashing, NOT flashed)"
+
+# 2. write boot_a and verify
+dd if="$IMG" of=$DEV bs=1048576 conv=fsync 2>/dev/null || die "dd failed - slot A is trying, it will fall back to B"
+sync
+echo 3 > /proc/sys/vm/drop_caches
+BACK=$(head -c "$SIZE" $DEV | sha256sum | cut -c1-64)
+[ "$BACK" = "$WANT" ] || die "READ-BACK MISMATCH ($BACK) - slot A is trying, so it will fall back to B"
+
+# 3. re-arm and re-check, in case anything marked A in between. boot_a is already new here, so a
+#    failure is loud: slot A may be "successful" on an untested image (M5)
+loud() {
+	say "!!! boot_a holds the NEW image but slot A could not be re-armed trying ($*) !!!"
+	say "!!! fix A/B before rebooting: uc-pxx-bootctl arm-trying --slot a / status !!!"
+	echo 1 > /sys/class/leds/red/brightness 2>/dev/null
+	exit 4
+}
+/usr/sbin/uc-pxx-bootctl arm-trying --slot a
+rc=$?
+[ $rc -eq 3 ] && unknown "arm-trying rc 3 (after flashing)"
+[ $rc -eq 0 ] || loud "arm-trying rc $rc"
+/usr/sbin/uc-pxx-bootctl status 2>&1 | grep -q "current: A{prio 15 tries 7 succ 0}" || loud "not {15,7,0}"
+say "boot_a = $WANT (token $NAME), slot A armed trying {15,7,0}; cold-boot to test"

@@ -139,7 +139,7 @@ All services of this family start with `uc-pxx-`.
 | `uc-pxx-firmware` | boot | Copies the Wi-Fi and Bluetooth files from the vendor partition. See "Firmware" |
 | `uc-pxx-switch` | boot | Sets the MAC address and starts the Ethernet switch. Not tested in this form |
 | `uc-pxx-audio` | default | Done. Mixer defaults and volume |
-| `uc-pxx-boot-ok` | default | Stub. Marks nothing. See [boot-control.md](boot-control.md) |
+| `uc-pxx-boot-ok` | default | Starts the boot-marking hook. See [boot-control.md](boot-control.md) |
 | `uc-pxx-als` | default | Stub. The light sensor feed is not written |
 
 ### Firmware

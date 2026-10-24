@@ -1,0 +1,30 @@
+#!/bin/sh
+# uc-pxx-arm-slot — arm slot A to "trying" BEFORE anything changes system_a or boot_a (an update, a kernel
+# package, the installer). While A is "successful", a bad change has no automatic fallback to slot B. After
+# this call a bad change runs down the tries, and U-Boot falls back to slot B.
+# Takes /run/uc-pxx-abdata.lock (the same lock as the flash wrapper and the boot-marking hook), creates the
+# marker /run/uc-pxx-slot-a-changed (the hook of THIS boot then never marks), arms slot A trying and proves
+# the exact state A{15,7,0}. The next boot marks A again when it is healthy.
+# Exit: 0 armed and verified | 1 refused or failed, nothing is changed by this script | 3 A/B STATE UNKNOWN.
+set -u
+
+say() { echo "uc-pxx-arm-slot: $*" >&2; echo "uc-pxx-arm-slot: $*" > /dev/kmsg; }
+die() { say "$*"; exit 1; }
+unknown() {
+	say "!!! A/B STATE UNKNOWN - DO NOT REBOOT - inspect LBA 49156 by hand !!! ($*)"
+	echo 1 > /sys/class/leds/red/brightness 2>/dev/null
+	exit 3
+}
+
+exec 9>/run/uc-pxx-abdata.lock
+i=0   # busybox flock has no -w: poll for up to 600 s
+until flock -n 9; do i=$((i + 1)); [ $i -ge 600 ] && die "could not take the A/B lock"; sleep 1; done
+: > /run/uc-pxx-slot-a-changed
+
+/usr/sbin/uc-pxx-bootctl arm-trying --slot a
+rc=$?
+[ $rc -eq 3 ] && unknown "arm-trying rc 3"
+[ $rc -eq 0 ] || die "arm-trying refused/failed (rc $rc), do NOT change system_a or boot_a"
+/usr/sbin/uc-pxx-bootctl status 2>&1 | grep -q "current: A{prio 15 tries 7 succ 0}" || \
+	die "slot A is not exactly {15,7,0} after arming, do NOT change system_a or boot_a"
+say "slot A armed trying {15,7,0}; you may change system_a / boot_a now"

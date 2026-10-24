@@ -1,25 +1,11 @@
 #!/sbin/openrc-run
-# Once this boot is usable (an IPv4 address and sshd), mark it as good with
-# uc-pxx-boot-ok. A boot that is never marked runs out of tries, and U-Boot
-# starts the other slot (docs/boot-control.md).
-# The service waits in the background (at most BOOT_OK_WAIT seconds), so the
-# boot is not delayed. A boot that never gets there stays unmarked.
-# TODO: the marking itself is not written yet. See /usr/local/sbin/uc-pxx-boot-ok.
-description="Mark the boot as good after the network and sshd are up"
-BOOT_OK_WAIT=${BOOT_OK_WAIT:-600}
+# Start the boot-marking hook /etc/uc-pxx-mark-boot.sh in the background. The
+# hook waits until the system is healthy and then marks the boot as good. A
+# boot that is never marked runs out of tries, and U-Boot starts the other
+# slot (docs/boot-control.md). The hook does all the checks and the waiting,
+# so this service does not delay the boot.
+description="Mark the boot as good after a healthy boot (uc-pxx-mark-boot)"
+command=/etc/uc-pxx-mark-boot.sh
+command_background=true
+pidfile=/run/uc-pxx-boot-ok.pid
 depend() { after sshd networking; }
-start() {
-	ebegin "Scheduling uc-pxx-boot-ok (network and sshd, at most ${BOOT_OK_WAIT}s)"
-	( i=0
-	  while [ $i -lt "$BOOT_OK_WAIT" ]; do
-		if ip -4 -o addr show scope global 2>/dev/null | grep -q inet &&
-		   rc-service sshd status >/dev/null 2>&1; then
-			/usr/local/sbin/uc-pxx-boot-ok 2>&1 | logger -t uc-pxx-boot-ok
-			exit 0
-		fi
-		sleep 5; i=$((i + 5))
-	  done
-	  logger -t uc-pxx-boot-ok "no IPv4 address or no sshd after ${BOOT_OK_WAIT}s: boot not marked good"
-	) >/dev/null 2>&1 &
-	eend 0
-}

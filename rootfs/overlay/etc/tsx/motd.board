@@ -1,2 +1,2 @@
-   boot:        uc-pxx-boot-ok status
+   boot:        uc-pxx-bootctl status
    firmware:    uc-pxx-firmware status
