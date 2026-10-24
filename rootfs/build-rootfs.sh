@@ -1,14 +1,16 @@
 #!/bin/bash
-# Build the rootfs of the UC-P10 (Alpine aarch64) from packages, in docker
-# with qemu-user binfmt (qemu-aarch64) on the build host.
+# Build the rootfs of the UC-P10 (Alpine aarch64) from packages, and the boot
+# initramfs, in docker with qemu-user binfmt (qemu-aarch64) on the build host.
 #
 #   ./build-rootfs.sh modules [MODULES.tar.gz|KBUILD_DIR ...]
+#   ./build-rootfs.sh initramfs
 #   ./build-rootfs.sh rootfs | all
 #
 # Outputs (out/): rootfs.tar.gz, rootfs.ext4 (compact, the initramfs grows it
 # to fill system_a on the first boot), rootfs.manifest (exact package
-# versions), rootfs.sizes and rootfs.sha256. The initramfs is built into the
-# kernel Image and is not made here (docs/kernel.md).
+# versions), rootfs.sizes and rootfs.sha256. "initramfs" writes
+# out/initramfs.cpio (not compressed). ci/build-kernel.sh --initramfs builds it
+# into the kernel Image (docs/boot.md "The boot initramfs").
 #
 # Env:
 #   ALPINE      Alpine branch (default v3.24)
@@ -16,9 +18,13 @@
 #               IMG_HEADROOM_MB, default 256, at most 1700 because system_a is 1792)
 #   KVER        which staged module trees under modules/lib/modules/ go into
 #               the rootfs (default: all of them, separated by spaces)
-#   AUTHORIZED_KEYS  test builds only: ssh public keys that the rootfs accepts
-#               at every boot, baked into the image
-#               (default: rootfs/authorized_keys if it exists, never committed)
+#   AUTHORIZED_KEYS  test builds only: ssh public keys that the rootfs (and
+#               the rescue of the initramfs) accept at every boot, baked into
+#               the image (default: rootfs/authorized_keys if it exists, never
+#               committed)
+#   RTL8363_INIT  the static aarch64 rtl8363-init (tools/rtl8363-init/build.sh).
+#               "initramfs" puts it into the rescue. The binary links with the
+#               Realtek SDK and is not part of this repository.
 #   PROFILE     what the rootfs holds (default ha): console (text login on the
 #               panel screen and SSH), kiosk (console plus the browser kiosk) or
 #               ha (kiosk plus the Home Assistant layer). profiles/*.list name
@@ -166,6 +172,23 @@ modules() {
 	echo "staged module trees: $(ls "$MODULES/lib/modules" | tr '\n' ' ')"
 }
 
+# Single input files of the initramfs, mounted read only
+in_file() {
+	local name=$1 path=$2
+	[ -n "$path" ] || return 0
+	[ -f "$path" ] || { echo "$name=$path: no such file"; exit 1; }
+	dargs+=(-v "$(readlink -f "$path"):/in/$name:ro" -e "$name=/in/$name")
+}
+
+initramfs() {
+	need_binfmt
+	local dargs
+	dargs=(--rm --platform $PLATFORM -v "$REPO:/w" -e ALPINE="$ALPINE" -e UIDGID="$UIDGID")
+	if [ -s "$AUTHORIZED_KEYS" ]; then dargs+=(-v "$(readlink -f "$AUTHORIZED_KEYS"):/in/authorized_keys:ro" -e AUTHORIZED_KEYS=/in/authorized_keys); fi
+	in_file RTL8363_INIT "${RTL8363_INIT:-}"
+	docker run "${dargs[@]}" "$IMAGE" /w/rootfs/initramfs/mkinitramfs.sh /w/rootfs/out/initramfs.cpio
+}
+
 # The apk tree: a required folder with <ALPINE>/common and <ALPINE>/uc-pxx. It
 # becomes the read-only mount /aports in the container.
 need_apk_tree() {
@@ -193,6 +216,7 @@ rootfs() {
 cmd=${1:-all}; [ $# -gt 0 ] && shift
 case "$cmd" in
 modules) modules "$@";;
+initramfs) initramfs;;
 rootfs|all) rootfs;;
-*) echo "usage: $0 [modules FILE|DIR...|rootfs|all]"; exit 1;;
+*) echo "usage: $0 [modules FILE|DIR...|initramfs|rootfs|all]"; exit 1;;
 esac

@@ -33,7 +33,7 @@ what is open.
 | A/B boot control, flash wrapper and arm helper | Renamed from the reviewed bring-up tools. Needs a review of the exact files, see [boot-control.md](docs/boot-control.md) |
 | LED package `uc-pxx-leds` (daemon, command, ESPHome plugin) | Written. Tested with fake LEDs, see [leds.md](docs/leds.md). Not run on a unit |
 | ESPHome board plugin (switches) | Written. Tested with a real `EVIOCGSW`. Not run on a unit |
-| Initramfs and rescue | Open |
+| Initramfs and rescue | Written (`rootfs/initramfs`). Not booted on a unit yet, see [boot.md](docs/boot.md) |
 | Installer | Open, see [install.md](docs/install.md) |
 
 The bring-up kernel ran on one UC-P10 from slot A. It showed the display,

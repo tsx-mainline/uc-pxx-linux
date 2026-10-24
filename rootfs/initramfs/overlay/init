@@ -1,0 +1,145 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# PID 1 of the uc-pxx boot initramfs. The initramfs is built into the kernel
+# Image (ci/build-kernel.sh --initramfs). This script finds the root file
+# system of slot A, checks it, grows it to fill system_a, mounts it and runs
+# switch_root into it. On any failure it starts the rescue system: busybox
+# init with a shell on the serial console (ttyS2, 115200) and, when the switch
+# init works, eth0 with DHCP and dropbear (key login only).
+#
+# The root file system: the partition named system_a (GPT name) with an ext4
+# file system labeled tsxroot. If no partition has the name system_a, the
+# first partition of the eMMC with the label tsxroot. The script checks,
+# grows or mounts only a file system with the label tsxroot.
+#
+# The script never writes the A/B metadata, a boot partition or the partition
+# table. It writes only to the root file system (e2fsck, resize2fs).
+#
+# Kernel command line (the device tree /chosen/bootargs):
+#   uc-pxx.rescue        start the rescue system
+#   uc-pxx.rootwait=N    wait N seconds for the root partition (default 15)
+#   uc-pxx.init=PATH     the init of the root file system (default /sbin/init)
+# The word uc-pxx.id=TOKEN belongs to the boot-marking hook of the root file
+# system. This script does not read or change it.
+# Root file system file:
+#   /etc/uc-pxx-force-rescue   start the rescue system once (the file is removed)
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mkdir -p /dev/pts /run /tmp /newroot
+mount -t devpts devpts /dev/pts
+mount -t tmpfs -o mode=0755,nodev,nosuid run /run
+
+LOG=/run/uc-pxx-initramfs.log
+msg() {
+	echo "uc-pxx-initramfs: $*" > /dev/kmsg 2>/dev/null
+	echo "uc-pxx-initramfs: $*" >> "$LOG"
+}
+
+rescue() {
+	msg "RESCUE: $*"
+	echo "$*" > /run/uc-pxx-rescue-reason
+	mountpoint -q /newroot && umount /newroot 2>/dev/null
+	exec /sbin/init
+}
+
+up() { cut -d. -f1 /proc/uptime; }
+
+wait=15 init=/sbin/init want_rescue=
+for c in $(cat /proc/cmdline); do
+	case $c in
+	uc-pxx.rescue|uc-pxx.rescue=1) want_rescue=1;;
+	uc-pxx.rootwait=*) wait=${c#uc-pxx.rootwait=};;
+	uc-pxx.init=*) init=${c#uc-pxx.init=};;
+	esac
+done
+case $wait in ''|*[!0-9]*) wait=15;; esac
+msg "start, kernel $(uname -r)"
+[ -n "$want_rescue" ] && rescue "uc-pxx.rescue is on the kernel command line"
+
+# part_by_name NAME: the block device of the eMMC partition with that GPT name
+part_by_name() {
+	for u in /sys/class/block/mmcblk*p*/uevent; do
+		[ -r "$u" ] || continue
+		grep -qx "PARTNAME=$1" "$u" || continue
+		d=${u%/uevent}; echo "/dev/${d##*/}"; return 0
+	done
+	return 1
+}
+# label_of DEV and type_of DEV: from the busybox blkid
+label_of() { blkid "$1" 2>/dev/null | sed -n 's/.* LABEL="\([^"]*\)".*/\1/p'; }
+type_of() { blkid "$1" 2>/dev/null | sed -n 's/.* TYPE="\([^"]*\)".*/\1/p'; }
+
+# find_root: the device of the root file system, or nothing
+find_root() {
+	if d=$(part_by_name system_a); then
+		[ -b "$d" ] && { echo "$d"; return 0; }
+	fi
+	d=$(findfs LABEL=tsxroot 2>/dev/null) || return 1
+	case $d in /dev/mmcblk*p*) echo "$d"; return 0;; esac
+	return 1
+}
+
+end=$(( $(up) + wait ))
+dev=
+while :; do
+	dev=$(find_root) && break
+	[ "$(up)" -ge "$end" ] && break
+	sleep 0.25
+done
+[ -n "$dev" ] || rescue "no root partition: no system_a and no LABEL=tsxroot on the eMMC within ${wait}s"
+lab=$(label_of "$dev") typ=$(type_of "$dev")
+msg "root partition $dev (label '${lab:-none}', type '${typ:-none}')"
+[ "$lab" = tsxroot ] && [ "$typ" = ext4 ] ||
+	rescue "$dev is not an ext4 file system with the label tsxroot (label '${lab:-none}', type '${typ:-none}'): not installed yet?"
+
+# Check the file system. Exit codes of e2fsck: 0 clean, 1 fixed, 2 fixed
+# (reboot needed for a mounted file system, not the case here), 4 and more
+# not fixed.
+msg "checking $dev"
+e2fsck -p "$dev" > /run/fsck.log 2>&1; rc=$?
+if [ $rc -ge 4 ]; then
+	msg "e2fsck -p gave $rc, trying e2fsck -y"
+	e2fsck -y "$dev" >> /run/fsck.log 2>&1; rc=$?
+	[ $rc -ge 4 ] && rescue "the root file system on $dev is broken (e2fsck code $rc, see /run/fsck.log)"
+fi
+msg "e2fsck code $rc"
+
+# Grow the file system to fill its partition when the partition is more than
+# 64 MiB larger (a compact rootfs.ext4 written into system_a).
+psz=$(cat "/sys/class/block/${dev##*/}/size" 2>/dev/null)
+set -- $(dumpe2fs -h "$dev" 2>/dev/null | sed -n 's/^Block count: *//p; s/^Block size: *//p')
+if [ -n "$psz" ] && [ $# = 2 ]; then
+	fsz=$(( $1 * $2 / 512 ))
+	if [ $((psz - fsz)) -gt 131072 ]; then
+		msg "growing the root file system on $dev ($((fsz / 2048)) MiB to $((psz / 2048)) MiB)"
+		if { e2fsck -f -p "$dev" && resize2fs "$dev"; } > /run/resize.log 2>&1; then
+			msg "root file system grown"
+		else
+			msg "resize2fs on $dev failed (see /run/resize.log), the boot goes on with the old size"
+		fi
+	fi
+fi
+
+mount -t ext4 -o rw,noatime "$dev" /newroot || rescue "cannot mount $dev"
+if [ -e /newroot/etc/uc-pxx-force-rescue ]; then
+	rm -f /newroot/etc/uc-pxx-force-rescue
+	sync
+	rescue "/etc/uc-pxx-force-rescue was on the root file system"
+fi
+[ -x "/newroot$init" ] || [ -L "/newroot$init" ] || rescue "no $init on the root file system on $dev"
+
+mkdir -p /newroot/var/log
+cp /run/fsck.log /newroot/var/log/initramfs-fsck.log 2>/dev/null
+cp /run/resize.log /newroot/var/log/initramfs-resize.log 2>/dev/null
+msg "switch_root to $dev, $init"
+umount /dev/pts 2>/dev/null
+for m in /dev /proc /sys /run; do
+	mkdir -p "/newroot$m"
+	mount --move "$m" "/newroot$m" || rescue "cannot move $m into the root file system"
+done
+# switch_root runs as PID 1 and must be the last command. If it fails, PID 1
+# ends and the kernel restarts the unit after the panic timeout (panic=30 on
+# the command line). That boot then counts as a failed try of slot A.
+exec switch_root /newroot "$init"

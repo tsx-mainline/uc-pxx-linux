@@ -1,0 +1,81 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The rescue system of the uc-pxx boot initramfs (busybox init runs this
+# script once). It runs from RAM and writes nothing to the eMMC. It reads only
+# the six MAC bytes of the cfg partition.
+#
+# Steps, in the background, so the serial shell is ready at once:
+#   1. Set the MAC address of eth0 from the cfg partition (bytes 6 to 11).
+#   2. Start the RTL8364B switch (rtl8363-init init) while eth0 is down.
+#   3. Bring eth0 up and get an address with DHCP.
+#   4. Start dropbear on port 22 with key login only, when the image has an
+#      authorized_keys file (a test build). Without a key, no SSH starts.
+# The rescue never marks the boot as good. Slot A stays "trying", so the
+# unit falls back to slot B when the tries run out.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+log() {
+	echo "uc-pxx-rescue: $*" > /dev/kmsg 2>/dev/null
+	echo "uc-pxx-rescue: $*" >> /run/uc-pxx-rescue.log
+}
+mkdir -p /run /tmp
+hostname uc-pxx-rescue
+ip link set lo up
+log "rescue system: $(cat /run/uc-pxx-rescue-reason 2>/dev/null || echo 'no reason recorded')"
+log "shell on ttyS2 (115200). Log: /run/uc-pxx-initramfs.log, /run/uc-pxx-rescue.log"
+
+# cfg_mac: the factory MAC address (6 bytes at offset 6 of the partition cfg),
+# read only. It must be a globally administered unicast address.
+cfg_mac() {
+	for u in /sys/class/block/mmcblk*p*/uevent; do
+		grep -qx PARTNAME=cfg "$u" 2>/dev/null || continue
+		d=${u%/uevent}; d=/dev/${d##*/}
+		m=$(dd if="$d" bs=1 skip=6 count=6 2>/dev/null | od -An -tx1 | tr -s ' ' ':' | sed 's/^://;s/:$//')
+		case $m in ""|00:00:00:00:00:00|ff:ff:ff:ff:ff:ff) return 1;; esac
+		[ ${#m} -eq 17 ] || return 1
+		[ $((0x${m%%:*} & 3)) -eq 0 ] || return 1
+		echo "$m"; return 0
+	done
+	return 1
+}
+
+net() {
+	i=0
+	while [ ! -d /sys/class/net/eth0 ] && [ $i -lt 40 ]; do sleep 0.5; i=$((i + 1)); done
+	[ -d /sys/class/net/eth0 ] || { log "no eth0 (the GMAC driver did not probe)"; return 0; }
+	if mac=$(cfg_mac); then
+		ip link set eth0 address "$mac" && log "eth0 MAC from the cfg partition"
+	else
+		log "no valid MAC in the cfg partition, eth0 keeps $(cat /sys/class/net/eth0/address)"
+	fi
+	# The switch init needs eth0 down. The MAC reset of eth0 needs the RGMII
+	# clock of the switch.
+	i=0
+	while ! ls /sys/bus/mdio_bus/drivers/realtek-rtl8364b-smi/*/smi > /dev/null 2>&1 && [ $i -lt 20 ]; do
+		sleep 0.5; i=$((i + 1))
+	done
+	if [ -x /usr/sbin/rtl8363-init ]; then
+		timeout 30 /usr/sbin/rtl8363-init init > /run/rtl8363-init.log 2>&1 &&
+			log "switch started" || log "rtl8363-init init failed (see /run/rtl8363-init.log)"
+	else
+		log "no rtl8363-init in this initramfs, the switch stays as it is"
+	fi
+	ip link set eth0 up || { log "ip link set eth0 up failed"; return 0; }
+	udhcpc -i eth0 -b -t 10 -T 3 -x hostname:uc-pxx-rescue \
+		-s /usr/share/udhcpc/default.script > /run/udhcpc.log 2>&1
+	i=0
+	while ! ip -4 addr show dev eth0 | grep -q inet && [ $i -lt 60 ]; do sleep 1; i=$((i + 1)); done
+	a=$(ip -4 addr show dev eth0 | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -n 1)
+	if [ -z "$a" ]; then log "eth0 has no IPv4 address after 60 s"; return 0; fi
+	log "eth0 $a"
+	if [ -s /root/.ssh/authorized_keys ] && command -v dropbear > /dev/null; then
+		mkdir -p /etc/dropbear
+		# -s: no password logins. -R: make the host keys when needed.
+		dropbear -R -s -p 22 -P /run/dropbear.pid 2>> /run/uc-pxx-rescue.log &&
+			log "ssh: dropbear on $a:22, key login only"
+	else
+		log "no authorized_keys in this initramfs, no ssh"
+	fi
+}
+
+( net ) &
+exit 0

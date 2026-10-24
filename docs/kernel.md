@@ -68,8 +68,10 @@ Build on a build host and never on the workstation.
 The device tree is in the boot image, so each model needs its own image.
 `DTB_NAMES` limits the device trees that the script builds.
 
-The initramfs is open (see the status table in the [README](../README.md)).
-The CI jobs build with a minimal initramfs for that reason.
+`rootfs/build-rootfs.sh initramfs` makes the initramfs
+([boot.md](boot.md) "The boot initramfs"). The CI jobs build with a minimal
+initramfs, because the real one needs the switch tool, which links with the
+Realtek SDK.
 
 ## Boot image
 

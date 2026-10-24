@@ -42,8 +42,8 @@ The build does these steps:
 `rootfs/out/rootfs.ext4` must be at most 1700 MiB. `system_a` has 1792 MiB.
 The initramfs grows the file system to fill the partition at the first boot.
 
-The initramfs is built into the kernel Image. It is not made here
-([kernel.md](kernel.md)).
+The initramfs is built into the kernel Image. `rootfs/build-rootfs.sh
+initramfs` makes it ([boot.md](boot.md) "The boot initramfs").
 
 ## Where the packages come from
 
@@ -335,4 +335,5 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 - A data volume check for the first boot (`tsx-data` of common).
 - Chromium flags for panfrost (`TSX_BROWSER_GL_FLAGS`).
 - The Bluetooth proxy default (`TSX_BT_PROXY_DEFAULT` is `off` until tested).
-- The initramfs and the rescue system.
+- The rescue system has no screen output yet. Its shell is on the serial
+  console only.

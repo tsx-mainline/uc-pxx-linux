@@ -1,0 +1,8 @@
+# The rescue system of the uc-pxx boot initramfs (busybox init). /init starts
+# it when the root file system cannot start. It runs from RAM.
+::sysinit:/etc/init.d/rcS
+# A root shell on the serial console (ttyS2, 115200, the debug UART). Only a
+# person with the debug cable can reach it.
+::respawn:/bin/sh -c "[ -c /dev/ttyS2 ] && exec /sbin/getty -n -l /bin/sh -L 115200 ttyS2 vt100 || exec sleep 2147483647"
+::ctrlaltdel:/sbin/reboot
+::shutdown:/bin/umount -a -r

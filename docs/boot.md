@@ -81,6 +81,66 @@ running kernel is the image in the slot. See
   a boot from the partition (stub at `0x280000`) and for a boot from RAM
   (stub at `0xa200800`).
 
+## The boot initramfs
+
+The initramfs is built into the kernel Image. `rootfs/build-rootfs.sh
+initramfs` makes it as the uncompressed cpio archive
+`rootfs/out/initramfs.cpio`. The sources are in `rootfs/initramfs/`.
+`/init` does these steps:
+
+1. Mount `/proc`, `/sys`, `/dev` and a tmpfs on `/run`.
+2. Find the root partition: the partition with the GPT name `system_a`. If
+   no partition has this name, the eMMC partition with the label `tsxroot`.
+   Wait up to 15 seconds for it.
+3. Stop with the rescue system if the partition does not hold an ext4 file
+   system with the label `tsxroot`. The script never checks, grows or mounts
+   another file system.
+4. Check the file system with `e2fsck -p`. If that cannot fix it, run
+   `e2fsck -y`. If that also fails, start the rescue system.
+5. Grow the file system to fill the partition, if the partition is more than
+   64 MiB larger. A new `rootfs.ext4` is smaller than `system_a`.
+6. Mount the file system read-write on `/newroot`.
+7. Move `/dev`, `/proc`, `/sys` and `/run` into it and run `switch_root` to
+   `/sbin/init`.
+
+`/run/uc-pxx-initramfs.log` keeps the messages of these steps. The kernel log
+has them too, with the prefix `uc-pxx-initramfs:`. The root file system gets
+the logs of e2fsck and resize2fs in `/var/log/initramfs-fsck.log` and
+`/var/log/initramfs-resize.log`.
+
+The initramfs never writes the A/B metadata, a boot partition or the
+partition table. It does not read or change `uc-pxx.id=` on the kernel
+command line. The boot-marking hook of the root file system reads it.
+
+### The rescue system
+
+`/init` starts the rescue system when a step fails, when the kernel command
+line has `uc-pxx.rescue`, or when the root file system has the file
+`/etc/uc-pxx-force-rescue` (the script removes the file). The rescue system
+is busybox init. It runs from RAM and writes nothing to the eMMC.
+
+- A root shell on the serial console `ttyS2` (115200 baud). It needs no
+  login.
+- In the background: the MAC address of eth0 from the `cfg` partition (read
+  only), the switch init with `rtl8363-init`, DHCP on eth0.
+- SSH with dropbear on port 22 with key login only, if the build had
+  `AUTHORIZED_KEYS`. Without a key, no SSH starts.
+- The reason is in `/run/uc-pxx-rescue-reason`. The log is
+  `/run/uc-pxx-rescue.log`.
+
+The rescue system never marks the boot as good. So slot A stays "trying".
+
+If `switch_root` itself fails, PID 1 ends. The kernel then restarts the unit
+after 30 seconds (`panic=30` on the command line). That boot counts as a
+failed try of slot A.
+
+Other options of the kernel command line: `uc-pxx.rootwait=N` (seconds,
+default 15) and `uc-pxx.init=PATH` (default `/sbin/init`).
+
+The build takes `RTL8363_INIT` (the tool of `tools/rtl8363-init`, built with
+the Realtek SDK) and `AUTHORIZED_KEYS` as files. This repository holds
+neither of them.
+
 ## A/B metadata
 
 The slot state is a libavb AvbABData structure in the `misc` partition at LBA
