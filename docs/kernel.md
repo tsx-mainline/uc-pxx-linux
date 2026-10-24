@@ -10,34 +10,34 @@ the boot image.
 |---|---|---|
 | LTS (default) | `uc-pxx-lts` | `v6.18.54` |
 
-`kernel/KERNEL_REV.lts` pins one revision. It is a placeholder today, because
-the branch does not exist yet. `ci/build-kernel.sh` stops with an error while
-the pin is the placeholder.
+`kernel/KERNEL_REV.lts` pins one revision of the branch: the 40 digit commit
+`ab26906e957143feebc45776148c5ee460e65d8c`. `ci/build-kernel.sh` fetches that
+commit and stops if the checkout differs from it.
 
 A stable flavor (`uc-pxx-stable`, v7.2) comes later. Develop on stable first
 and carry the change to LTS, as the sister projects do.
 
 ## What the branch holds
 
-The bring-up kernel is the TSW-770 branch of tsx-xx70-linux with one patch for
-the UC-P10. The patch has these parts:
+The branch starts from a clean `v6.18.54` and carries only the commits for
+the UC-P10 and the UC-P8. It has one commit of the TSW-770 tree (the vendor
+prefix `crestron`). The names of the drivers do not have a model prefix:
 
 | Part | Content |
 |---|---|
-| Display | Board device tree base, the Himax panel driver (`panel-himax-ucp10.c`) |
-| Network | GMAC fixed link, the RTL8364B management driver (`ucp10-rtl8364b-smi.c`), fusb302 and USB-C role switch |
+| Display | The shared board file `rk3399-crestron-uc-pxx.dtsi`, the Himax panel driver `panel-crestron-uc-p10.c` (`DRM_PANEL_CRESTRON_UC_P10`) and the ILI9881C panel of the UC-P8 |
+| Network | GMAC fixed link, the RTL8364B management driver `realtek-rtl8364b-smi.c` (`REALTEK_RTL8364B_SMI`, compatible `realtek,rtl8364b-smi`), fusb302 and USB-C role switch |
 | Hardware | PMIC and rails, CPU and GPU frequency tables, thermal, io-domains, touch with the six keys, Wi-Fi, Bluetooth, audio, LEDs, keys, SARADC, light sensor |
 | Audio | TAS5825M codec driver and a refcount fix in audio-graph-card2 |
-| OP-TEE | A probe change that accepts the old ABI revision. The device tree disables the node |
 
-The `uc-pxx-lts` branch starts from a clean `v6.18.54` instead. It carries
-only the UC-P10 commits and drops the commits of the TSW-770 that the
-UC-P10 does not need. Another task makes this branch.
+The UC-P8 device tree and panel are build-only. No UC-P8 unit was available
+to test them.
 
 Names:
 
-- The device tree is `arch/arm64/boot/dts/rockchip/rk3399-crestron-ucp10.dts`
-  with the compatible `crestron,uc-p10`.
+- The device trees are `arch/arm64/boot/dts/rockchip/rk3399-crestron-ucp10.dts`
+  (compatible `crestron,uc-p10`) and `rk3399-crestron-ucp8.dts` (compatible
+  `crestron,uc-p8`).
 - The config fragment is `arch/arm64/configs/uc-pxx.config`.
 - The kernel worktrees are `linux-uc-pxx-6.18` and `linux-uc-pxx-7.2`.
 
@@ -45,7 +45,8 @@ Names:
 
 The board needs no kernel module to boot. The drivers for the display,
 network, Wi-Fi, Bluetooth, audio, touch and GPU are built in. The initramfs is
-built into the Image (`CONFIG_INITRAMFS_SOURCE`). The firmware for Wi-Fi and
+built into the Image (`CONFIG_INITRAMFS_SOURCE`). The config fragment does not
+set the source, so the build gets it as an input. The firmware for Wi-Fi and
 Bluetooth is not in the initramfs. The service `uc-pxx-firmware` copies it
 from the unit. See [rootfs.md](rootfs.md).
 
@@ -53,21 +54,30 @@ from the unit. See [rootfs.md](rootfs.md).
 
 Build on a build host and never on the workstation.
 
-1. Run `ci/build-kernel.sh --flavor lts --initramfs FILE`. `FILE` is the cpio
-   archive for the built-in initramfs.
-2. The script writes `Image`, `rk3399-crestron-ucp10.dtb`, `kernel.release`,
-   `kernel.commit` and `sha256sums.txt` to the output folder.
-3. Run `kernel/mkimage.sh` with the Image, the device tree, a resource for
-   U-Boot and a build token. It writes the boot image.
+1. Make the initramfs as an uncompressed cpio archive (newc format).
+2. Run `ci/build-kernel.sh --flavor lts --initramfs FILE`. The option is
+   required. The script sets `CONFIG_INITRAMFS_SOURCE` to `FILE` and
+   `CONFIG_INITRAMFS_COMPRESSION_XZ=y`. The kernel compresses the archive.
+3. The script writes `Image`, `rk3399-crestron-ucp10.dtb`,
+   `rk3399-crestron-ucp8.dtb`, `kernel.release`, `kernel.commit` and
+   `sha256sums.txt` to the output folder.
+4. For each model, run `kernel/mkimage.sh` with the same Image, the device
+   tree of that model, a resource for U-Boot and a build token. It writes the
+   boot image of that model.
+
+The device tree is in the boot image, so each model needs its own image.
+`DTB_NAMES` limits the device trees that the script builds.
 
 The initramfs is open (see the status table in the [README](../README.md)).
+The CI jobs build with a minimal initramfs for that reason.
 
 ## Boot image
 
 `kernel/mkimage.sh` ports the shim build of the bring-up tree. It needs the
 resource for U-Boot as an argument, because that file derives from vendor
 files. [boot.md](boot.md) tells what the boot image holds and which size
-limits apply. The tests are `kernel/tests/test-mkimage.sh` and
+limits apply. The tests are `kernel/tests/test-build-kernel.sh`,
+`kernel/tests/test-mkimage.sh` and
 `kernel/tests/test-mkresource.sh`.
 
 A rebuilt kernel is not bit-for-bit the same. The build time, the host and
@@ -80,6 +90,5 @@ the `-dirty` suffix are in the Image. Check a rebuilt image by these points:
 
 ## TODO
 
-- Create the branch and fill in `kernel/KERNEL_REV.lts`.
 - Add the stable flavor.
 - Add the UC-P8 device tree and panel driver.

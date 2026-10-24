@@ -53,6 +53,8 @@ jobs:
         run: sh rootfs/tests/test-switch.sh
       - name: rootfs/tests/test-watchdog.sh - watchdog service timeout and interval checks
         run: sh rootfs/tests/test-watchdog.sh
+      - name: kernel/tests/test-build-kernel.sh - the pin, the initramfs input, the fragment and the device trees of ci/build-kernel.sh
+        run: sh kernel/tests/test-build-kernel.sh
       - name: rootfs/tests/test-kernel-pins.sh - the rootfs kernel package matches kernel/KERNEL_REV.lts
         run: rootfs/tests/test-kernel-pins.sh
 

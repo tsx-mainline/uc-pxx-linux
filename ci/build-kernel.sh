@@ -1,30 +1,34 @@
 #!/bin/bash
-# Build the kernel of the UC-P10 on a plain x86 Linux host, with the aarch64
+# Build the kernel of the UC-P10 and UC-P8 on a plain x86 Linux host, with the aarch64
 # cross compiler. It needs no docker and no hardware.
 #
-#   ci/build-kernel.sh --flavor lts [--src DIR] [--out DIR] [--jobs N] [--initramfs FILE]
+#   ci/build-kernel.sh --flavor lts --initramfs FILE [--src DIR] [--out DIR] [--jobs N]
 #
 # The script reads the pinned revision from kernel/KERNEL_REV.<flavor>. It
 # gets that revision from KERNEL_REPO (default
 # https://github.com/tsx-mainline/linux) when --src has no checkout of it.
 # It builds in <src>/../build-<flavor> and writes these files to --out
 # (default <src>/../out-<flavor>):
-#   Image (not compressed, with the initramfs built in), the device tree
-#   rk3399-crestron-ucp10.dtb, kernel.release, kernel.commit,
-#   modules-<release>.tar.gz (only when the kernel has modules), sha256sums.txt
-# kernel/mkimage.sh makes the boot image from Image and the device tree.
+#   Image (not compressed, with the initramfs built in), the device trees
+#   rk3399-crestron-ucp10.dtb and rk3399-crestron-ucp8.dtb, kernel.release,
+#   kernel.commit, modules-<release>.tar.gz (only when the kernel has
+#   modules), sha256sums.txt
+# kernel/mkimage.sh makes the boot image from Image and one device tree. The
+# device tree belongs to the model, so make one boot image for each model.
 #
-# --initramfs FILE sets CONFIG_INITRAMFS_SOURCE to the cpio archive FILE.
-# Without it, the Image has whatever initramfs the config names.
+# --initramfs FILE is required. The config fragment uc-pxx.config does not
+# name an initramfs. The script sets CONFIG_INITRAMFS_SOURCE to the cpio
+# archive FILE and CONFIG_INITRAMFS_COMPRESSION_XZ=y. The kernel compresses
+# the archive with xz, so FILE must not be compressed.
 #
 # Host packages: gcc-aarch64-linux-gnu, make, bc, bison, flex, libssl-dev,
-# libelf-dev, kmod, zstd, git.
+# libelf-dev, kmod, zstd, xz-utils, git.
 # Env: CROSS_COMPILE (default aarch64-linux-gnu-), KERNEL_REPO, DTB_NAMES (the
 # device trees to build, separated by spaces).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 FLAVOR= SRC= OUT= INITRAMFS= JOBS=$(nproc)
-usage() { sed -n '2,24p' "$0" >&2; exit 2; }
+usage() { sed -n '2,27p' "$0" >&2; exit 2; }
 while [ $# -gt 0 ]; do
 	case $1 in
 	--flavor) FLAVOR=${2:?}; shift;;
@@ -38,9 +42,11 @@ while [ $# -gt 0 ]; do
 	shift
 done
 case $FLAVOR in lts) ;; *) usage;; esac
+[ -n "$INITRAMFS" ] || { echo "build-kernel: --initramfs FILE is required" >&2; usage; }
+[ -f "$INITRAMFS" ] || { echo "build-kernel: no initramfs $INITRAMFS" >&2; exit 1; }
 REPO_URL=${KERNEL_REPO:-https://github.com/tsx-mainline/linux}
 CROSS=${CROSS_COMPILE:-aarch64-linux-gnu-}
-DTBS=${DTB_NAMES:-rk3399-crestron-ucp10.dtb}
+DTBS=${DTB_NAMES:-rk3399-crestron-ucp10.dtb rk3399-crestron-ucp8.dtb}
 REV=$(grep -v '^#' "$HERE/kernel/KERNEL_REV.$FLAVOR" | head -n 1 | tr -d ' \n')
 [ ${#REV} = 40 ] || { echo "build-kernel: kernel/KERNEL_REV.$FLAVOR has no 40 digit revision" >&2; exit 1; }
 case $REV in *[!0]*) ;; *) echo "build-kernel: kernel/KERNEL_REV.$FLAVOR is still the placeholder" >&2; exit 1;; esac
@@ -48,7 +54,6 @@ SRC=${SRC:-$HERE/../linux-uc-pxx-$FLAVOR}
 BUILD=$(dirname "$SRC")/build-$FLAVOR
 OUT=${OUT:-$(dirname "$SRC")/out-$FLAVOR}
 command -v "${CROSS}gcc" >/dev/null || { echo "build-kernel: no ${CROSS}gcc" >&2; exit 1; }
-[ -z "$INITRAMFS" ] || [ -f "$INITRAMFS" ] || { echo "build-kernel: no initramfs $INITRAMFS" >&2; exit 1; }
 
 echo "== source: $REPO_URL $REV -> $SRC"
 if [ "$(git -C "$SRC" rev-parse HEAD 2>/dev/null || true)" != "$REV" ]; then
@@ -67,10 +72,9 @@ rm -rf "$BUILD"; mkdir -p "$BUILD"
 # string names no build machine.
 M="make -C $SRC O=$BUILD ARCH=arm64 CROSS_COMPILE=$CROSS KBUILD_BUILD_USER=build KBUILD_BUILD_HOST=uc-pxx-build"
 $M -s defconfig uc-pxx.config
-if [ -n "$INITRAMFS" ]; then
-	INITRAMFS=$(readlink -f "$INITRAMFS")
-	"$SRC/scripts/config" --file "$BUILD/.config" --set-str INITRAMFS_SOURCE "$INITRAMFS"
-fi
+INITRAMFS=$(readlink -f "$INITRAMFS")
+"$SRC/scripts/config" --file "$BUILD/.config" --set-str INITRAMFS_SOURCE "$INITRAMFS" \
+	-e RD_XZ -e INITRAMFS_COMPRESSION_XZ
 $M -s olddefconfig
 
 echo "== build: Image, $DTBS"

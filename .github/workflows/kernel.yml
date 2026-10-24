@@ -7,7 +7,8 @@ on:
 # Builds the kernel at the revision of kernel/KERNEL_REV.lts, with defconfig and
 # arch/arm64/configs/uc-pxx.config. The source is the kernel fork at
 # KERNEL_REPO (ci/build-kernel.sh), so the pinned commit must exist there. The
-# job fails while the pin is the placeholder. The output goes to out-<flavor>
+# build needs an initramfs. The real one is open, so the job builds with a
+# minimal one. It builds the device trees of both models. The output goes to out-<flavor>
 # in the workspace, because actions/upload-artifact refuses a path with "..".
 # The job also runs the tests of the boot image tools.
 jobs:
@@ -23,7 +24,7 @@ jobs:
       - name: install the cross compiler and the kernel build tools
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu make gcc bc bison flex libssl-dev libelf-dev kmod zstd git device-tree-compiler
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu make gcc bc bison flex libssl-dev libelf-dev kmod zstd xz-utils cpio git device-tree-compiler
 
       - name: install mkbootimg (ci/install-mkbootimg.sh)
         run: ci/install-mkbootimg.sh "$RUNNER_TEMP/mkbootimg"
@@ -39,8 +40,15 @@ jobs:
           path: ../linux-uc-pxx-${{ matrix.flavor }}
           key: linux-uc-pxx-${{ matrix.flavor }}-${{ hashFiles(format('kernel/KERNEL_REV.{0}', matrix.flavor)) }}
 
+      - name: make a minimal initramfs (the real one is open, see README)
+        run: |
+          mkdir initramfs-root
+          printf '#!/bin/sh\n' > initramfs-root/init
+          chmod +x initramfs-root/init
+          (cd initramfs-root && echo init | cpio -o -H newc --quiet) > initramfs.cpio
+
       - name: build (ci/build-kernel.sh --flavor ${{ matrix.flavor }})
-        run: ci/build-kernel.sh --flavor ${{ matrix.flavor }} --out out-${{ matrix.flavor }}
+        run: ci/build-kernel.sh --flavor ${{ matrix.flavor }} --initramfs initramfs.cpio --out out-${{ matrix.flavor }}
 
       - name: kernel release, commit and sha256
         id: info
@@ -56,6 +64,7 @@ jobs:
           path: |
             out-${{ matrix.flavor }}/Image
             out-${{ matrix.flavor }}/rk3399-crestron-ucp10.dtb
+            out-${{ matrix.flavor }}/rk3399-crestron-ucp8.dtb
             out-${{ matrix.flavor }}/modules-*.tar.gz
             out-${{ matrix.flavor }}/kernel.release
             out-${{ matrix.flavor }}/kernel.commit
