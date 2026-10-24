@@ -76,6 +76,7 @@ svc default tsx-buttons
 svc default tsx-panelctl
 svc default tsx-autoupdate
 svc default uc-pxx-status-led
+svc default uc-pxx-leds
 svc default uc-pxx-boot-ok
 svc default networking
 svc default chronyd

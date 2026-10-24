@@ -1,0 +1,20 @@
+#!/sbin/openrc-run
+# Root helper for the LEDs that Home Assistant controls (uc-pxx-leds). The
+# ESPHome plugin of the board writes commands to /run/tsx/uc-pxx-leds. The
+# helper runs tsx-keypad for the key LEDs and drives the RGB status LED once
+# the boot is marked good. It never hides the red LED (docs/leds.md).
+description="Root helper for the key LEDs and the status LED of the ESPHome device"
+supervisor=supervise-daemon
+command=/usr/local/sbin/uc-pxx-leds
+respawn_delay=5
+respawn_max=0
+output_log=/var/log/uc-pxx-leds.log
+error_log=/var/log/uc-pxx-leds.log
+depend() {
+	need localmount
+	after udev-settle tsx-buttons uc-pxx-status-led
+	before tsx-esphome tsx-voice
+}
+start_pre() {
+	checkpath -d -m 0755 /run/tsx
+}

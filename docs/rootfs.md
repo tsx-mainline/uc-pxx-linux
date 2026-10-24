@@ -183,6 +183,7 @@ All services of this family start with `uc-pxx-`.
 | `uc-pxx-status-led` | default | Done. Blue heartbeat on the status LED until slot A is marked good, then solid green. See "Status LED" |
 | `uc-pxx-presence` | default | Done. Reads the PIR switch and writes the presence state. See "Presence" |
 | `uc-pxx-als` | default | Done. Reads the light sensor and feeds the automatic brightness. See "Ambient light" |
+| `uc-pxx-leds` | default | Root helper for the ESPHome plugin: key LED overrides and the status LED. See [leds.md](leds.md) |
 
 ### Status LED
 
@@ -202,6 +203,10 @@ slot A is still not successful then, blue keeps the heartbeat.
 The program never writes the `red` LED. `uc-pxx-arm-slot` and the
 boot-marking hook light red when the A/B state is unknown
 ([boot-control.md](boot-control.md)). Nothing in the program clears it.
+
+The program also writes `/run/tsx/status-led.state` with `boot wait` or
+`boot ok`. Home Assistant may take the status LED only after `boot ok`
+([leds.md](leds.md)).
 
 After `uc-pxx-arm-slot` armed slot A in a running system, the LED stays as it
 is until the next boot. The next boot starts the program again.
@@ -263,6 +268,8 @@ The file `/run/tsx/presence.state` has the lines `present`, `distance`,
 has no distance. `motion` is the switch without the hold. `tsx-panelctl`,
 `tsx-mqtt` and the ESPHome device read `present` and `distance`.
 `PRESENCE_DISTANCE_MM` and `PRESENCE_MIN_MM` have no effect on this board.
+Common cannot hide them for a presence sensor without a distance
+([leds.md](leds.md) "Presence without a distance").
 
 `tsx-idled` opens the same input device. By the code of `tsx-idled` (not
 tested on the unit), every change of the switch counts as activity. So it wakes a blank screen and restarts the blank
@@ -342,6 +349,8 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 | `rootfs/tests/test-audio.sh` | `uc-pxx-audio` with a stub `amixer` |
 | `rootfs/tests/test-firmware.sh` | `uc-pxx-firmware` with a made-up vendor folder |
 | `rootfs/tests/test-status-led.sh` | `uc-pxx-status-led` with fake LEDs and a stub for `uc-pxx-bootctl` |
+| `rootfs/tests/test-leds.sh` | `uc-pxx-leds`: the commands, the gate, the red latch, the FIFO |
+| `rootfs/tests/test-esphome-plugin.sh` | The ESPHome plugin against `tsx_panel` of tsx-linux-common (see [leds.md](leds.md)) |
 | `rootfs/tests/test-switch.sh` | `uc-pxx-switch` with stub tools |
 | `rootfs/tests/test-watchdog.sh` | The timeout checks of `uc-pxx-watchdog` |
 | `rootfs/tests/test-kernel-pins.sh` | `rootfs/check-kernel-pins.sh` |

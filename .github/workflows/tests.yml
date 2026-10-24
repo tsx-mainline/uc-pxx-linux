@@ -61,10 +61,29 @@ jobs:
         run: sh rootfs/tests/test-watchdog.sh
       - name: rootfs/tests/test-status-led.sh - the status LED service with fake LEDs and a stub boot-control tool
         run: sh rootfs/tests/test-status-led.sh
+      - name: rootfs/tests/test-leds.sh - the root helper of the key LEDs and the status LED, with fake LEDs and a FIFO
+        run: sh rootfs/tests/test-leds.sh
       - name: kernel/tests/test-build-kernel.sh - the pin, the initramfs input, the fragment and the device trees of ci/build-kernel.sh
         run: sh kernel/tests/test-build-kernel.sh
       - name: rootfs/tests/test-kernel-pins.sh - the rootfs kernel package matches kernel/KERNEL_REV.lts
         run: rootfs/tests/test-kernel-pins.sh
+
+  # The ESPHome plugin runs against tsx_panel of tsx-linux-common. TSX_COMMON
+  # names the checkout.
+  plugin-tests:
+    name: ESPHome plugin with tsx-linux-common
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: check out tsx-linux-common
+        uses: actions/checkout@v4
+        with:
+          repository: tsx-mainline/tsx-linux-common
+          path: tsx-linux-common
+      - name: rootfs/tests/test-esphome-plugin.sh - the plugin with fake LEDs, a fake input device and a FIFO
+        run: sh rootfs/tests/test-esphome-plugin.sh
+        env:
+          TSX_COMMON: ${{ github.workspace }}/tsx-linux-common
 
   # TODO: add a job that runs the shared software of tsx-linux-common with the
   # board files of this repository, as tsx-xx70-linux does. It needs

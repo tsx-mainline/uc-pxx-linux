@@ -20,12 +20,18 @@
 #   run    (default) poll until the slot is successful or the limit ends
 #   once   look at the state one time, set the LED and exit
 #
-# Test hooks: UC_PXX_LEDS (the folder of the LED class devices),
+# The program also writes /run/tsx/status-led.state with one line, "boot ok"
+# (slot A is marked successful) or "boot wait" (not yet, or unknown). The root
+# helper uc-pxx-leds reads it: Home Assistant may drive the status LED only
+# when the line says "boot ok" (docs/leds.md).
+#
+# Test hooks: UC_PXX_LED_STATE (the state file), UC_PXX_LEDS (the folder of the LED class devices),
 # UC_PXX_BOOTCTL (the status program), UC_PXX_LED_POLL_S, UC_PXX_LED_LIMIT_S
 # and UC_PXX_LED_SLEEP (the command that waits for POLL_S seconds).
 set -u
 LEDS=${UC_PXX_LEDS:-/sys/class/leds}
 BOOTCTL=${UC_PXX_BOOTCTL:-/usr/sbin/uc-pxx-bootctl}
+STATE=${UC_PXX_LED_STATE:-/run/tsx/status-led.state}
 POLL_S=${UC_PXX_LED_POLL_S:-10}
 LIMIT_S=${UC_PXX_LED_LIMIT_S:-600}
 SLEEP=${UC_PXX_LED_SLEEP:-sleep}
@@ -50,14 +56,22 @@ slot_state() {
 	esac
 }
 
+# put_state ok|wait: tell the boot state in one step (write, then rename)
+put_state() {
+	mkdir -p "$(dirname "$STATE")" 2>/dev/null
+	{ echo "boot $1" > "$STATE.tmp" && chmod 644 "$STATE.tmp" && mv "$STATE.tmp" "$STATE"; } 2>/dev/null || true
+}
+
 # show_wait: blue heartbeat, green off. Without the trigger, blue is solid.
 show_wait() {
+	put_state wait
 	led_write green brightness 0
 	if ! led_write blue trigger heartbeat; then led_write blue brightness 1; fi
 }
 
 # show_ok: solid green, blue off
 show_ok() {
+	put_state ok
 	led_write blue trigger none
 	led_write blue brightness 0
 	led_write green trigger none

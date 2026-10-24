@@ -51,7 +51,7 @@ S
 }
 # run_it MODE: run the program with the stub, the fake LEDs and no waiting
 run_it() {
-	UC_PXX_LEDS=$T/leds UC_PXX_BOOTCTL=$T/bootctl UC_PXX_LED_SLEEP=true \
+	UC_PXX_LEDS=$T/leds UC_PXX_BOOTCTL=$T/bootctl UC_PXX_LED_SLEEP=true UC_PXX_LED_STATE=$T/state \
 	UC_PXX_LED_POLL_S=${POLL:-10} UC_PXX_LED_LIMIT_S=${LIMIT:-600} "$PROG" "$@" > "$T/out" 2>&1
 }
 led() { echo "$(cat "$T/leds/$1/$2")"; }
@@ -110,6 +110,20 @@ UC_PXX_LEDS=$T/leds "$PROG" bogus > "$T/out" 2>&1; rc=$?
 eq "$rc" "2" "a wrong argument: exit 2"
 mkleds "$T/leds"; rm "$T/leds/blue/trigger"; stub 0; run_it once
 eq "$(led blue brightness)" "1" "blue without a trigger file: solid blue"
+
+echo "== the state file for uc-pxx-leds =="
+mkleds "$T/leds"; rm -f "$T/state"; stub 0; run_it once
+eq "$(cat "$T/state")" "boot wait" "trying: the file says boot wait"
+mkleds "$T/leds"; stub 1; run_it once
+eq "$(cat "$T/state")" "boot ok" "successful: the file says boot ok"
+[ "$(stat -c %a "$T/state")" = 644 ] && ok "the state file has mode 644" || bad "state file mode"
+mkleds "$T/leds"; stub rc; run_it once
+eq "$(cat "$T/state")" "boot wait" "a failed status: boot wait"
+mkleds "$T/leds"; stub 0 0 1; POLL=1 LIMIT=10 run_it run
+eq "$(cat "$T/state")" "boot ok" "run: the file changes to boot ok at the end"
+mkleds "$T/leds"; stub 0; POLL=10 LIMIT=20 run_it run
+eq "$(cat "$T/state")" "boot wait" "run: the limit ends, the file stays boot wait"
+[ ! -e "$T/state.tmp" ] && ok "no temporary file is left" || bad "temporary file left"
 
 echo "$N passed, $F failed"
 [ "$F" = 0 ]
