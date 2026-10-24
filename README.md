@@ -63,6 +63,7 @@ tools/               helpers for the board (switch init)
 
 - [boot.md](docs/boot.md): the boot chain, the shim and the slot layout
 - [hardware.md](docs/hardware.md): the board and its parts
+- [kernel.md](docs/kernel.md): kernel branch, build and boot image
 - [boot-control.md](docs/boot-control.md): the A/B boot control (placeholder)
 - [install.md](docs/install.md): the install path (placeholder)
 
