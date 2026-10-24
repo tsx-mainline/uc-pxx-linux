@@ -195,8 +195,11 @@ settings are in `/etc/conf.d/uc-pxx-watchdog`.
 
 ### Keys
 
-`/etc/tsx/buttons-board.conf` lists the six touch keys. The LEDs do not fit
-the LED scheme of `tsx-buttons` yet. See the comments in the file.
+`/etc/tsx/buttons-board.conf` lists the six touch keys in their physical
+order: `teams`, `headset`, `speaker`, `volume_down`, `volume_up` and `mic`
+([hardware.md](hardware.md) has the table). The layout is not verified with
+evtest yet. The LEDs do not fit the LED scheme of `tsx-buttons` yet. See the
+comments in the file.
 
 ## Tests
 

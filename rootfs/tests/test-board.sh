@@ -74,7 +74,12 @@ grep -qx 'ttyS2' "$HERE/overlay/etc/securetty" && ok "securetty lists ttyS2" || 
 grep -q 'ttyS2' "$HERE/overlay/etc/inittab" && ok "inittab has a getty on ttyS2" || bad "inittab lacks ttyS2"
 grep -q '^LABEL=tsxroot[[:space:]]*/[[:space:]]' "$HERE/overlay/etc/fstab" && ok "fstab: root by the label tsxroot" || bad "fstab: no root"
 grep -q '^LABEL=tsxdata[[:space:]]*/data[[:space:]]' "$HERE/overlay/etc/fstab" && ok "fstab: /data by the label tsxdata" || bad "fstab: no /data"
-codes=$(awk '$1 == "button" { print $3 }' "$HERE/overlay/etc/tsx/buttons-board.conf" | tr '\n' ' ')
-eq "$codes" "113 115 114 202 149 148 " "buttons-board.conf: the six key codes"
+pairs=$(awk '$1 == "button" { print $2 "=" $3 }' "$HERE/overlay/etc/tsx/buttons-board.conf" | tr '\n' ' ')
+eq "$pairs" "teams=148 headset=149 speaker=202 volume_down=114 volume_up=115 mic=113 " "buttons-board.conf: the six keys in physical order"
+grep -q 'user-confirmed layout; key order to verify with evtest' "$HERE/overlay/etc/tsx/buttons-board.conf" && ok "buttons-board.conf: marked as not verified" || bad "buttons-board.conf: no verify mark"
+grep -q '^SLIDE_STEP=0' "$HERE/overlay/etc/tsx/buttons-board.conf" && ok "buttons-board.conf: no slide" || bad "buttons-board.conf: SLIDE_STEP"
+for l in teams_white mute_headset mute_speaker mute_red; do
+	grep -q "^#   $l " "$HERE/overlay/etc/tsx/buttons-board.conf" && ok "buttons-board.conf: names the LED $l" || bad "buttons-board.conf: no LED $l"
+done
 echo "$N passed, $F failed"
 [ "$F" = 0 ]

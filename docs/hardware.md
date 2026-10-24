@@ -40,20 +40,29 @@ channels and shares the capture device with dsnoop.
 
 ## Keys and LEDs
 
-The touch controller reports six touch keys (object T15). The key codes in
-the board file are 113, 115, 114, 202, 149 and 148. The panel has these LEDs:
+The touch controller reports six touch keys (object T15). The layout below is
+user-confirmed. The key order is to verify with evtest. Nobody has pressed the
+keys with evtest yet.
 
-| LED | Use |
-|---|---|
-| `teams_white` | Teams key |
-| `mute_red` | Mute indicator |
-| `mute_speaker` | Speaker mute indicator |
-| `mute_headset` | Headset mute indicator |
-| `green`, `red`, `blue` | RGB status LED |
+| Place (left to right) | Key | Key code | LED |
+|---|---|---|---|
+| 1 | Teams | `KEY_PROG1` (148) | `teams_white` |
+| 2 | Headset | `KEY_PROG2` (149) | `mute_headset` |
+| 3 | Speaker | `KEY_PROG3` (202) | `mute_speaker` |
+| 4 | Volume down | `KEY_VOLUMEDOWN` (114) | none |
+| 5 | Volume up | `KEY_VOLUMEUP` (115) | none |
+| 6 | Mic (mute) | `KEY_MUTE` (113) | `mute_red` |
 
-The file `rootfs/overlay/etc/tsx/buttons-board.conf` describes the keys and
-LEDs for `tsx-buttons`. TODO: check on a unit that the key names match the
-printed keys and which LED belongs to which key.
+The device tree lists the codes in the order of the T15 key index: 113, 115,
+114, 202, 149, 148. The RGB status LED (`green`, `red`, `blue`) is in the
+centre at the bottom.
+
+The file `rootfs/overlay/etc/tsx/buttons-board.conf` has the key names and
+codes for `tsx-buttons`. The key LEDs are plain on/off LEDs. The LED model of
+`tsx-buttons` does not fit them yet ([rootfs.md](rootfs.md)).
+
+To verify the order, run `evtest` on the touch input device and press the
+keys from left to right. The codes must appear in the order of the table.
 
 ## Network identity
 
