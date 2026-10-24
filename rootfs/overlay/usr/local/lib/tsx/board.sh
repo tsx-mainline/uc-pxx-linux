@@ -16,8 +16,7 @@
 #   TSX_PKG_PREFIX         the prefix of the package names of the family
 #                          ($TSX_PKG_PREFIX-board, $TSX_PKG_PREFIX-kernel-lts).
 #                          Common builds these names. Without this variable
-#                          common uses tsx-$TSX_FAMILY. NEW: common must learn
-#                          this variable (TODO, tsx-autoupdate and tsx-config).
+#                          common uses tsx-$TSX_FAMILY.
 #   TSX_APK_CATEGORY       the repository category after the Alpine branch
 #                          (<APK_URL>/<branch>/common and .../$TSX_APK_CATEGORY)
 #   TSX_HA_MODEL           the model name in Home Assistant when the board has
@@ -47,11 +46,6 @@
 #                          while the Sendspin player owns the volume
 #   TSX_RESCUE_BACKLIGHT   percent of max_brightness that the rescue system
 #                          sets at start (default 50, at most 80)
-#   TSX_PRE_UPDATE_HOOK    a command that tsx-autoupdate must run BEFORE it
-#                          changes the system. It arms slot A to "trying", so a
-#                          bad update falls back to slot B (docs/boot-control.md).
-#                          PLACEHOLDER: the name and the call of the hook in
-#                          common are not final (TODO).
 #   TSX_CONFIG_RELOAD      services that tsx-config apply reloads when the
 #                          sensor settings change
 #
@@ -70,6 +64,13 @@
 #   tsx_board_rescue_extra extra lines for the rescue screen (none yet)
 #   tsx_board_ledbar_map MODEL  the name of the LED map for the USB LED bar
 #                          (none here)
+#   tsx_board_pre_update   the board hook of tsx-autoupdate. It runs after the
+#                          check found packages and BEFORE apk upgrade changes
+#                          anything. It runs uc-pxx-arm-slot, which arms slot A
+#                          to "trying", so a bad update falls back to slot B
+#                          (docs/boot-control.md "The update rule"). When it
+#                          exits with a non-zero status, tsx-autoupdate does not
+#                          install and keeps the packages pending.
 #   tsx_board_load         read the board data once, on a running system
 #                          (nothing to read here)
 #   tsx_board_probe DIR    point the data reader at the board data from the
@@ -103,8 +104,6 @@ TSX_BROWSER_GL_FLAGS=${TSX_BROWSER_GL_FLAGS-}
 TSX_VOLUME_CMD=${TSX_VOLUME_CMD:-uc-pxx-audio volume}
 TSX_VOLUME_FIXED_CMD=${TSX_VOLUME_FIXED_CMD-uc-pxx-audio fixed}
 TSX_RESCUE_BACKLIGHT=${TSX_RESCUE_BACKLIGHT:-50}
-# Placeholder name, see the list of variables above.
-TSX_PRE_UPDATE_HOOK=${TSX_PRE_UPDATE_HOOK:-/usr/sbin/uc-pxx-arm-slot}
 
 # tsx_board_load: the board keeps no key/value store. Nothing to read.
 tsx_board_load() { return 0; }
@@ -166,6 +165,9 @@ tsx_board_unit_id() {
 }
 tsx_board_hostname_hint() { return 0; }
 tsx_board_ledbar_map() { return 0; }
+# The board hook of tsx-autoupdate. The status of the function is the status
+# of uc-pxx-arm-slot: 0 armed and verified, 1 refused, 3 A/B state unknown.
+tsx_board_pre_update() { /usr/sbin/uc-pxx-arm-slot; }
 # TODO: show the boot slot and the A/B state on the rescue screen, after the
 # boot-control tool exists (docs/boot-control.md).
 tsx_board_rescue_extra() { return 0; }

@@ -62,6 +62,9 @@ The board package and the profile packages are private. The published tree
 does not hold them. `rootfs/check-apk-tree.sh` stops the build and names the
 missing packages.
 
+The board needs the commits of tsx-linux-common that add `TSX_PKG_PREFIX` and
+the board hook. They are not in a tagged release yet. Use no older common.
+
 TODO: the category `uc-pxx` does not exist in tsx-aports yet. The packages
 above are not written. The files in `rootfs/overlay` are the sources of
 `uc-pxx-board`.
@@ -111,9 +114,14 @@ functions that the shared scripts read. The main values:
 | `TSX_SERIAL_CONSOLE` | `ttyS2` |
 | `TSX_MAC_SOURCE` | `cfg` |
 
-`TSX_PKG_PREFIX` is new. Common builds the package names `tsx-$TSX_FAMILY-board`
-and `tsx-$TSX_FAMILY-kernel*` today. It must use `$TSX_PKG_PREFIX` instead,
-with the default `tsx-$TSX_FAMILY`. This change in tsx-linux-common is open.
+`tsx-autoupdate` builds the package names `$TSX_PKG_PREFIX-board` and
+`$TSX_PKG_PREFIX-kernel*`. This board sets `TSX_PKG_PREFIX=uc-pxx`. The
+variable and the board hook need a tsx-linux-common that has them (see the
+note in "Where the packages come from").
+
+The function `tsx_board_pre_update` is the board hook of `tsx-autoupdate`. It
+runs `uc-pxx-arm-slot` before `apk upgrade` changes the system
+([boot-control.md](boot-control.md) "The update rule").
 
 ### MAC address
 

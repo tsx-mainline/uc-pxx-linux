@@ -116,8 +116,11 @@ from `apk upgrade`, and for a rewrite of `system_a`. So every program that
 changes `system_a` or `boot_a` must call `uc-pxx-arm-slot` first and must stop
 when it fails:
 
-- `tsx-autoupdate`, through the board pre-update hook (`TSX_PRE_UPDATE_HOOK`
-  in `board.sh`, a placeholder name until common has the final one)
+- `tsx-autoupdate`, through the board hook `tsx_board_pre_update` in
+  `board.sh`. The hook runs `uc-pxx-arm-slot`. `tsx-autoupdate` runs it after
+  the check found packages and before `apk upgrade`. If the hook exits with a
+  non-zero status, `tsx-autoupdate` does not install. It logs the status and
+  keeps the packages pending. A check alone never calls the hook
 - the post-install script of the kernel package
 - the installer
 - `uc-pxx-update-boot`

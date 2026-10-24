@@ -23,13 +23,27 @@ out=$(env -i PATH="$PATH" sh -c ". '$BOARD'" 2>&1); eq "$out" "" "no output when
 for kv in TSX_FAMILY=uc-pxx TSX_PKG_PREFIX=uc-pxx TSX_APK_CATEGORY=uc-pxx TSX_HA_MODEL=UC-P10 TSX_SOUND_CARD=UCP10 \
 	TSX_DISPLAY_DRM=rockchip TSX_RENDER_DRM=panfrost TSX_DISPLAY_ENV= TSX_BT_CHIP=none \
 	TSX_BT_MAC_SETTABLE=no TSX_MAC_SOURCE=cfg TSX_SERIAL_CONSOLE=ttyS2 \
-	'TSX_VOLUME_CMD=uc-pxx-audio volume' 'TSX_VOLUME_FIXED_CMD=uc-pxx-audio fixed' \
-	TSX_PRE_UPDATE_HOOK=/usr/sbin/uc-pxx-arm-slot; do
+	'TSX_VOLUME_CMD=uc-pxx-audio volume' 'TSX_VOLUME_FIXED_CMD=uc-pxx-audio fixed'; do
 	k=${kv%%=*}; v=${kv#*=}
 	SH_CODE="printf '%s' \"\$$k\""; eq "$(sh_run)" "$v" "$k"
 done
 SH_CODE='printf "%s/%s" "$TSX_SOUND_CARD" "$TSX_BT_CHIP"'
 eq "$(sh_run TSX_SOUND_CARD=OTHER TSX_BT_CHIP=/x)" "OTHER//x" "a value in the environment wins"
+
+echo "== the board hook of tsx-autoupdate =="
+SH_CODE='type tsx_board_pre_update >/dev/null 2>&1 && echo defined'
+eq "$(sh_run)" "defined" "tsx_board_pre_update is defined"
+grep -q '^tsx_board_pre_update() { /usr/sbin/uc-pxx-arm-slot; }$' "$BOARD" && ok "the hook runs /usr/sbin/uc-pxx-arm-slot and nothing else" || bad "the hook is not exactly one call of uc-pxx-arm-slot"
+grep -q 'TSX_PRE_UPDATE_HOOK' "$BOARD" && bad "board.sh still has the TSX_PRE_UPDATE_HOOK placeholder" || ok "no TSX_PRE_UPDATE_HOOK placeholder"
+# replace the program path with a stub: the hook returns its exit status and its output goes through
+for rc in 0 1 3; do
+	printf '#!/bin/sh\necho "armed-stub rc=%s"\nexit %s\n' "$rc" "$rc" > "$T/arm-stub"; chmod +x "$T/arm-stub"
+	sed "s|/usr/sbin/uc-pxx-arm-slot|$T/arm-stub|" "$BOARD" > "$T/board-stub.sh"
+	out=$(env -i PATH="$PATH" sh -c ". '$T/board-stub.sh'; tsx_board_pre_update; echo status=\$?")
+	eq "$out" "armed-stub rc=$rc
+status=$rc" "the hook returns the exit status $rc of uc-pxx-arm-slot"
+done
+unset SH_CODE
 
 echo "== the MAC address from the cfg partition (bytes 6 to 11) =="
 # cfg: 1 MiB of zeros, with the MAC at byte 6
