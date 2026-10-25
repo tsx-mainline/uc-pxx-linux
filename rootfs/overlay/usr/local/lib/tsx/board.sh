@@ -26,7 +26,7 @@
 #                          spaces) of the display
 #   TSX_RENDER_DRM         DRM driver names of GPUs without a display. The
 #                          kiosk uses their render node. The display
-#                          (rockchip) and the GPU (panfrost) are two DRM
+#                          (rockchip-drm) and the GPU (panfrost) are two DRM
 #                          devices on this board.
 #   TSX_DISPLAY_ENV        NAME=value words that the kiosk exports when the
 #                          display driver is in TSX_DISPLAY_DRM
@@ -83,7 +83,11 @@ TSX_PKG_PREFIX=${TSX_PKG_PREFIX:-uc-pxx}
 TSX_APK_CATEGORY=${TSX_APK_CATEGORY:-uc-pxx}
 TSX_HA_MODEL=${TSX_HA_MODEL:-UC-P10}
 TSX_SOUND_CARD=${TSX_SOUND_CARD:-UCP10}
-TSX_DISPLAY_DRM=${TSX_DISPLAY_DRM:-rockchip}
+# The driver name of the display device, as in
+# /sys/class/drm/card*/device/driver. The kiosk matches it exactly. With
+# "rockchip" it found no display, so sway drew with pixman and Chromium ran
+# without the GPU.
+TSX_DISPLAY_DRM=${TSX_DISPLAY_DRM:-rockchip-drm}
 TSX_RENDER_DRM=${TSX_RENDER_DRM:-panfrost}
 TSX_DISPLAY_ENV=${TSX_DISPLAY_ENV-}
 # The BCM4345C5 Bluetooth controller attaches as a serdev device of the kernel

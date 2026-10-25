@@ -21,7 +21,7 @@ busybox sh -n "$BOARD" 2>/dev/null && ok "board.sh passes busybox sh -n" || bad 
 echo "== sourcing prints nothing and the values are the board values =="
 out=$(env -i PATH="$PATH" sh -c ". '$BOARD'" 2>&1); eq "$out" "" "no output when sourced"
 for kv in TSX_FAMILY=uc-pxx TSX_PKG_PREFIX=uc-pxx TSX_APK_CATEGORY=uc-pxx TSX_HA_MODEL=UC-P10 TSX_SOUND_CARD=UCP10 \
-	TSX_DISPLAY_DRM=rockchip TSX_RENDER_DRM=panfrost TSX_DISPLAY_ENV= TSX_BT_CHIP=none \
+	TSX_DISPLAY_DRM=rockchip-drm TSX_RENDER_DRM=panfrost TSX_DISPLAY_ENV= TSX_BT_CHIP=none \
 	TSX_BT_MAC_SETTABLE=no TSX_MAC_SOURCE=cfg TSX_SERIAL_CONSOLE=ttyS2 \
 	'TSX_VOLUME_CMD=uc-pxx-audio volume' 'TSX_VOLUME_FIXED_CMD=uc-pxx-audio fixed' \
 	'TSX_CONFIG_RELOAD=uc-pxx-als uc-pxx-presence'; do

@@ -142,7 +142,7 @@ functions that the shared scripts read. The main values:
 |---|---|
 | `TSX_FAMILY`, `TSX_APK_CATEGORY`, `TSX_PKG_PREFIX` | `uc-pxx` |
 | `TSX_SOUND_CARD` | `UCP10` |
-| `TSX_DISPLAY_DRM`, `TSX_RENDER_DRM` | `rockchip`, `panfrost` |
+| `TSX_DISPLAY_DRM`, `TSX_RENDER_DRM` | `rockchip-drm`, `panfrost` (the driver names in `/sys/class/drm/card*/device/driver`) |
 | `TSX_SERIAL_CONSOLE` | `ttyS2` |
 | `TSX_MAC_SOURCE` | `cfg` |
 
