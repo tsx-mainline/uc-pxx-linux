@@ -31,6 +31,10 @@
 #   UC_PXX_DEV_OVERLAY  TEST ONLY. 1 builds without the uc-pxx packages
 #               (docs/rootfs.md "Test build without the uc-pxx packages"). It
 #               needs UC_PXX_BOOTCTL and RTL8363_INIT (build-rootfs.sh).
+#   UC_PXX_DEV_COMMON  TEST ONLY, with UC_PXX_DEV_OVERLAY=1 and TSX_COMMON.
+#               1 copies the script files of the TSX_COMMON checkout over the
+#               files of the installed common packages, so the image has
+#               the common commits that are not published yet.
 # The script compiles nothing. It copies only the files of profiles/image.list
 # (fstab, inittab, the profile marker) and the splash images of the UC-P10
 # screen. The packages own all other files (docs/rootfs.md "Build the image").
@@ -131,6 +135,45 @@ cp -a /etc/apk/keys $R/etc/apk/
 if [ "$DEV" = 1 ]; then
 	# TEST ONLY: the files that the packages uc-pxx-board, uc-pxx-leds and
 	# uc-pxx-boot-tools will own, straight from the repository
+	if [ "${UC_PXX_DEV_COMMON:-}" = 1 ]; then
+		# TEST ONLY: the common checkout over the published common packages.
+		# Each folder of tsx-linux-common is the root of one package (the
+		# APKBUILDs of tsx-aports). Only the folders of installed packages
+		# count, and in them only etc/ and usr/ (the other folders are
+		# sources). The compiled programs stay as packaged. The board files
+		# below win over these files.
+		[ -d "${TSX_COMMON:-}/base" ] || { echo "UC_PXX_DEV_COMMON=1 needs TSX_COMMON"; exit 1; }
+		log "DEV: common files from TSX_COMMON over the packages"
+		: > /build/dev-common.list
+		for m in base:tsx-base autoupdate:tsx-autoupdate buttons:tsx-buttons kiosk:tsx-kiosk setup:tsx-setup \
+			ha:tsx-ha panel-app:tsx-panel-app sendspin:tsx-sendspin rescue:tsx-rescue-ui; do
+			d=${m%%:*} pkg=${m#*:}
+			[ -d "$TSX_COMMON/$d" ] && apk info --root $R -e "$pkg" > /dev/null 2>&1 || continue
+			(cd "$TSX_COMMON/$d" && find ./etc ./usr -type f 2>/dev/null) |
+			while read -r f; do
+				t=${f#./}
+				cmp -s "$TSX_COMMON/$d/$t" "$R/$t" && continue
+				[ -e "$R/$t" ] && why=changed || why=new
+				install -D -m "$(stat -c %a "$TSX_COMMON/$d/$t")" -o 0 -g 0 "$TSX_COMMON/$d/$t" "$R/$t"
+				chmod go-w "$R/$t"
+				echo "$why $pkg /$t" | tee -a /build/dev-common.list
+			done
+		done
+		# tsx-ha installs the ESPHome shim in /opt/lva/shim (install-lva.sh
+		# below copies it from there)
+		if apk info --root $R -e tsx-ha > /dev/null 2>&1 && [ -d "$TSX_COMMON/ha/voice/shim" ]; then
+			(cd "$TSX_COMMON/ha/voice/shim" && find . -type f -name '*.py') | while read -r f; do
+				t=opt/lva/shim/${f#./}
+				cmp -s "$TSX_COMMON/ha/voice/shim/$f" "$R/$t" && continue
+				[ -e "$R/$t" ] && why=changed || why=new
+				install -D -m 644 -o 0 -g 0 "$TSX_COMMON/ha/voice/shim/$f" "$R/$t"
+				echo "$why tsx-ha /$t" | tee -a /build/dev-common.list
+			done
+		fi
+		mkdir -p $R/etc/tsx
+		{ echo "TEST BUILD (UC_PXX_DEV_COMMON=1): these files come from a tsx-linux-common checkout, not from the packages."
+		  cat /build/dev-common.list; } > $R/etc/tsx/dev-common-overlay
+	fi
 	log "DEV: rootfs/overlay, packages/uc-pxx-leds/root, uc-pxx-bootctl, rtl8363-init"
 	for d in "$HERE/overlay" "$TOP/packages/uc-pxx-leds/root"; do
 		(cd "$d" && tar --owner=0 --group=0 --numeric-owner -cf - .) | tar -C $R -xpf -

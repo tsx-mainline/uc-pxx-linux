@@ -32,6 +32,10 @@
 #               packages, the common packages of dev/common-packages.list, the
 #               files of rootfs/overlay and packages/uc-pxx-leds/root,
 #               UC_PXX_BOOTCTL and RTL8363_INIT. Never publish such an image.
+#   UC_PXX_DEV_COMMON  TEST ONLY, DEV mode with TSX_COMMON: 1 copies the
+#               script files of that checkout over the installed common
+#               packages (mkrootfs.sh). The list is in /etc/tsx/dev-common-overlay
+#               of the image.
 #   UC_PXX_BOOTCTL  DEV mode: the static aarch64 uc-pxx-bootctl
 #               (tools/uc-pxx-bootctl/build.sh). Its sha256 must be the
 #               reviewed one (docs/boot-control.md), or the build stops.
@@ -251,6 +255,11 @@ rootfs() {
 		[ -n "${UC_PXX_BOOTCTL:-}" ] || { echo "UC_PXX_DEV_OVERLAY=1 needs UC_PXX_BOOTCTL"; exit 1; }
 		[ -n "${RTL8363_INIT:-}" ] || { echo "UC_PXX_DEV_OVERLAY=1 needs RTL8363_INIT"; exit 1; }
 		dargs+=(-e UC_PXX_DEV_OVERLAY=1)
+		if [ "${UC_PXX_DEV_COMMON:-}" = 1 ]; then
+			[ -n "${TSX_COMMON:-}" ] || { echo "UC_PXX_DEV_COMMON=1 needs TSX_COMMON"; exit 1; }
+			echo "WARNING: UC_PXX_DEV_COMMON=1: common files from $TSX_COMMON over the packages (TEST BUILD)"
+			dargs+=(-e UC_PXX_DEV_COMMON=1)
+		fi
 		in_file UC_PXX_BOOTCTL "$UC_PXX_BOOTCTL"
 		in_file RTL8363_INIT "$RTL8363_INIT"
 	fi

@@ -77,6 +77,14 @@ With `UC_PXX_DEV_OVERLAY=1` the build:
   A staged module tree must come from the pinned kernel;
 - writes the marker `/etc/tsx/dev-overlay`.
 
+The published common packages can be older than the tsx-linux-common
+checkout. With `UC_PXX_DEV_COMMON=1` and `TSX_COMMON`, the test build also
+copies the script files of the checkout over the files of the installed
+common packages (the `etc/` and `usr/` of each folder, which is the root of
+one package, and the ESPHome shim to `/opt/lva/shim`). The compiled programs stay as
+packaged. The files of `rootfs/overlay` win over these files. The list of the
+copied files is in `/etc/tsx/dev-common-overlay`.
+
 The boot image does not come from the image. Make it with
 `kernel/mkimage.sh` from the same kernel build.
 
