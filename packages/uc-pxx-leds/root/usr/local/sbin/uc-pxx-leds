@@ -14,14 +14,16 @@ fast). All are off at boot.
 
 Status LED: a color (off, red, green, blue, yellow, cyan, magenta, white) and a
 mode (solid, blink, heartbeat). The daemon owns it until the boot is good:
-blue heartbeat while slot A is not marked successful, then solid green. A
-command can change it only after that.
+a slow blue blink (500 ms on, 1500 ms off) while slot A is not marked
+successful, then solid green for BOOT_OK_HOLD_S seconds (default 10), then
+off. A command can change it only after the boot is good. "status auto" gives
+it back to this boot display.
 
 The boot state comes from `uc-pxx-bootctl status`, which only reads the A/B
 sector. The state is "ok" when slot A is marked successful and the marker
 /run/uc-pxx-slot-a-changed does not exist. The marker means that a script
 changed or armed slot A in this boot. The state is "locked" then, and the
-status LED shows the blue heartbeat again.
+status LED shows the slow blue blink again.
 
 Red LED safety latch. The A/B scripts write /sys/class/leds/red/brightness
 when the A/B state is unknown. The daemon never hides that:
@@ -40,7 +42,7 @@ kiosk, mode 0660. A client sends one line and reads one answer line ("ok" or
 
   ind teams|headset|speaker|mic on|off
   ind teams|headset|speaker|mic blink [slow|fast]
-  status auto                             the boot display, then green
+  status auto                             the boot display (off after the green hold)
   status off
   status COLOR [solid|heartbeat]
   status COLOR blink [slow|fast]
@@ -52,6 +54,9 @@ Every other line is refused. The daemon writes the state file
 Persistence: PERSIST=yes in /etc/tsx/uc-pxx-leds.conf (default no) saves the
 commands in /data/uc-pxx-leds.saved and replays them at the next start. A
 status command replays only after the boot is good.
+
+BOOT_OK_HOLD_S in the same file: the seconds of solid green after the boot is
+good (default 10). 0 keeps the green on.
 
 Environment overrides for tests: UC_PXX_LEDS (the LED class folder),
 UC_PXX_LEDS_SOCK, UC_PXX_LEDS_STATE, UC_PXX_LEDS_CONF, UC_PXX_LEDS_SAVE,
@@ -86,7 +91,11 @@ COLORS = {"off": (0, 0, 0), "red": (1, 0, 0), "green": (0, 1, 0), "blue": (0, 0,
           "yellow": (1, 1, 0), "cyan": (0, 1, 1), "magenta": (1, 0, 1), "white": (1, 1, 1)}
 CHANNELS = ("red", "green", "blue")
 MODES = ("solid", "blink", "heartbeat")
-SPEEDS = {"slow": 0.5, "fast": 0.125}          # seconds of one half period
+SPEEDS = ("slow", "fast")                      # the speeds of a command
+# Blink timing: speed -> (seconds on, seconds off). "boot" is the boot display.
+TIMING = {"slow": (0.5, 0.5), "fast": (0.125, 0.125), "boot": (0.5, 1.5)}
+BOOT_SHOW = ("blue", "blink", "boot")         # the status LED until the boot is good
+HOLD_DEFAULT = 10
 # One cycle of a software pattern: (seconds, on)
 HEARTBEAT = ((0.07, 1), (0.13, 0), (0.07, 1), (0.73, 0))
 MAX_LINE = 64
@@ -182,8 +191,8 @@ def pattern(mode, speed, now):
     """The value of a software pattern at time NOW and the seconds until it
     changes. mode is blink or heartbeat."""
     if mode == "blink":
-        half = SPEEDS[speed or "slow"]
-        cycle = ((half, 1), (half, 0))
+        on, off = TIMING[speed or "slow"]
+        cycle = ((on, 1), (off, 0))
     else:
         cycle = HEARTBEAT
     pos = now % sum(d for d, _ in cycle)
@@ -218,6 +227,9 @@ class Leds:
         self.status = None                    # None: auto, else (color, mode, speed)
         self.boot = "wait"
         self.boot_due = 0.0
+        self.hold = HOLD_DEFAULT              # seconds of green after the boot is good
+        self.ok_since = None                  # when the boot state became ok
+        self.now = 0.0                        # the time of the last step
         # LED -> the kernel triggers it offers, read now, before the first write
         self.triggers = {}
         for led in list(INDICATORS.values()) + list(CHANNELS):
@@ -231,12 +243,20 @@ class Leds:
 
     # ---- settings
     def read_conf(self):
-        value = "no"
+        value, hold = "no", None
         for line in (read_text(CONF) or "").splitlines():
             line = line.strip()
             if line.startswith("PERSIST="):
                 value = line.split("=", 1)[1].strip().strip("\"'")
+            elif line.startswith("BOOT_OK_HOLD_S="):
+                hold = line.split("=", 1)[1].strip().strip("\"'")
         self.persist = value in ("yes", "on", "1", "true")
+        self.hold = HOLD_DEFAULT
+        if hold:
+            if hold.isdigit() and len(hold) <= 6:
+                self.hold = int(hold)
+            else:
+                log("BOOT_OK_HOLD_S=%s is not a number of seconds: %d is used" % (clean(hold), HOLD_DEFAULT))
 
     def save(self):
         if not self.persist:
@@ -279,6 +299,7 @@ class Leds:
         if new != self.boot:
             log("boot state %s -> %s" % (self.boot, new))
             self.boot = new
+            self.ok_since = now if new == "ok" else None
 
     # ---- the red LED
     def red_check(self):
@@ -306,10 +327,18 @@ class Leds:
             self.last_red = want
 
     # ---- what each LED should do
+    def in_hold(self):
+        """Whether the boot display shows the green of a good boot now."""
+        if self.boot != "ok":
+            return False
+        return self.hold == 0 or self.now - self.ok_since < self.hold
+
     def effective_status(self):
         if self.boot != "ok":
-            return ("blue", "heartbeat", None)
-        return self.status or ("green", "solid", None)
+            return BOOT_SHOW
+        if self.status:
+            return self.status
+        return ("green", "solid", None) if self.in_hold() else ("off", "solid", None)
 
     def spec(self):
         """LED -> (mode, speed), mode off|on|blink|heartbeat or KEEP."""
@@ -360,9 +389,9 @@ class Leds:
                 base = os.path.join(LEDS, led)
                 write_text(os.path.join(base, "trigger"), trig)
                 if trig == "timer":
-                    ms = str(int(SPEEDS[speed or "slow"] * 1000))
-                    write_text(os.path.join(base, "delay_on"), ms)
-                    write_text(os.path.join(base, "delay_off"), ms)
+                    on, off = TIMING[speed or "slow"]
+                    write_text(os.path.join(base, "delay_on"), str(int(on * 1000)))
+                    write_text(os.path.join(base, "delay_off"), str(int(off * 1000)))
                 self.applied[led] = key
                 self.soft_val.pop(led, None)
             return None
@@ -445,10 +474,14 @@ class Leds:
     def tick(self, now):
         """One step: look at the red LED and the boot state, set the LEDs,
         write the state file. Return the seconds until the next step."""
+        self.now = now
         self.red_check()
         self.update_boot(now)
         wait = self.sync(now)
         self.publish()
+        if self.status is None and self.hold and self.in_hold():
+            end = self.ok_since + self.hold - now        # the end of the green hold
+            wait = end if wait is None else min(wait, end)
         return 0.5 if wait is None else max(0.01, min(0.5, wait))
 
 

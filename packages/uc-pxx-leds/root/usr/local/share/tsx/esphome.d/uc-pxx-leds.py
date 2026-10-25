@@ -59,7 +59,9 @@ COLORS = {"off": (0, 0, 0), "red": (1, 0, 0), "green": (0, 1, 0), "blue": (0, 0,
           "yellow": (1, 1, 0), "cyan": (0, 1, 1), "magenta": (1, 0, 1), "white": (1, 1, 1)}
 # effect name of Home Assistant -> words of the "status" command after the color
 EFFECTS = {"Solid": "solid", "Blink": "blink slow", "Fast blink": "blink fast", "Heartbeat": "heartbeat"}
-SHOWN_EFFECT = {"solid": "Solid", "blink slow": "Blink", "blink fast": "Fast blink", "heartbeat": "Heartbeat"}
+# "blink boot" is the slow blue blink of the boot display (no command has it)
+SHOWN_EFFECT = {"solid": "Solid", "blink slow": "Blink", "blink fast": "Fast blink", "heartbeat": "Heartbeat",
+                "blink boot": "Blink"}
 
 _cache = {"stamp": -1e9, "data": None}
 
@@ -233,8 +235,8 @@ def control_text():
         return "Unavailable (uc-pxx-leds is not running)"
     boot = (data.get("boot") or ["?"])[0]
     text = {"ok": "Free",
-            "wait": "Boot (the boot is not marked good yet, blue heartbeat)",
-            "locked": "Locked (slot A was changed in this boot, blue heartbeat)"}.get(boot, "Unknown")
+            "wait": "Boot (the boot is not marked good yet, slow blue blink)",
+            "locked": "Locked (slot A was changed in this boot, slow blue blink)"}.get(boot, "Unknown")
     if (data.get("red") or [""])[0] == "latched":
         text += ", red LED latched"
     return text

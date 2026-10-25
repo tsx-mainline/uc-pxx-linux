@@ -69,13 +69,20 @@ writes. The same is true for an LED that has no such trigger.
 
 ## Boot state
 
-At the start the status LED shows the boot state:
+At the start the status LED shows the boot state (the boot display):
 
 | Boot state | Status LED | Meaning |
 |---|---|---|
-| `wait` | Blue, heartbeat | Slot A is not marked successful |
-| `ok` | Green, solid | Slot A is marked successful |
-| `locked` | Blue, heartbeat | A script changed or armed slot A in this boot |
+| `wait` | Blue, slow blink (500 ms on, 1500 ms off) | Slot A is not marked successful |
+| `ok` | Green, solid for 10 seconds, then off | Slot A is marked successful |
+| `locked` | Blue, slow blink | A script changed or armed slot A in this boot |
+
+The slow blink uses the kernel trigger `timer` (`delay_on` 500, `delay_off`
+1500), or the same timing in software. After a good boot the LED stays dark
+in normal use. `BOOT_OK_HOLD_S` in `/etc/tsx/uc-pxx-leds.conf` sets the green
+time in seconds (default 10). `BOOT_OK_HOLD_S=0` keeps the green on. The green
+time starts each time the state changes to `ok`, also after a restart of the
+daemon.
 
 The daemon reads the state with `uc-pxx-bootctl status`. This command only
 reads the A/B sector. The daemon asks every 10 seconds while the state is not
@@ -90,7 +97,7 @@ gone and `uc-pxx-bootctl` says that slot A is successful.
 Until the state is `ok`, the daemon refuses every `status` command, except
 `status auto`. The indicators work in every state. After the state is `ok`, a
 `status` command changes the status LED. `status auto` goes back to the boot
-display (green when `ok`).
+display: green until the end of the green time, then off.
 
 ## Red LED safety latch
 
@@ -129,7 +136,7 @@ The daemon accepts only these lines and refuses all others:
 |---|---|
 | `ind NAME on` or `off` | NAME is `teams`, `headset`, `speaker` or `mic` |
 | `ind NAME blink [slow\|fast]` | Blink. The default is slow |
-| `status auto` | The boot display, then green |
+| `status auto` | The boot display (off after the green time) |
 | `status off` | All three LEDs off |
 | `status COLOR [solid\|heartbeat]` | A color |
 | `status COLOR blink [slow\|fast]` | A blinking color |
@@ -166,7 +173,7 @@ programs read it. Each line is a key and its words:
 | `red` | `free` or `latched` |
 | `teams`, `headset`, `speaker`, `mic` | `off`, `on` or `blink slow\|fast` |
 | `status` | `auto`, or the asked color, mode and speed |
-| `shown` | The color and mode that the status LED shows now. A latched red LED is in the color |
+| `shown` | The color and mode that the status LED shows now, for example `green solid`, `off solid` or `blue blink boot` (the slow blink of the boot display). A latched red LED is in the color |
 | `persist` | `yes` or `no` |
 
 ### Persistence
@@ -176,7 +183,8 @@ The default is `no`. The daemon then saves the commands in
 `/data/uc-pxx-leds.saved` after each change, and plays them back at the next
 start. A saved `status` command takes effect only after the boot is good. The
 saved file is plain text with the same lines as the commands. A line that does
-not parse is skipped. `rc-service uc-pxx-leds reload` reads the setting again.
+not parse is skipped. `rc-service uc-pxx-leds reload` reads the settings
+again (`PERSIST` and `BOOT_OK_HOLD_S`).
 
 ## ESPHome plugin
 
@@ -208,7 +216,8 @@ The button `key_leds_release` is gone. It gave the key LEDs back to
 - The effects of the Status LED are `Solid`, `Blink`, `Fast blink` and
   `Heartbeat`. The light turned off sends `status off`.
 - Until the boot is good, the daemon refuses the status commands. The light
-  then shows the real state again at the next poll (blue heartbeat).
+  then shows the real state again at the next poll (the slow blue blink, shown
+  as the effect `Blink`).
 - The text sensor says `Free`, `Boot (...)`, `Locked (...)` or `Unavailable`,
   with `, red LED latched` added when it applies.
 - A command waits for the answer of the daemon for at most half a second.

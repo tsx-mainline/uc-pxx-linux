@@ -2,8 +2,9 @@
 # Host test for the daemon uc-pxx-leds. It uses a made-up /sys/class/leds, a
 # stub for uc-pxx-bootctl and real sockets. It checks:
 #   - the parser: only the fixed command forms run, every other line is refused
-#   - the start state: indicators off, blue heartbeat until the boot is good,
-#     then green; commands for the status LED are refused before that
+#   - the start state: indicators off, a slow blue blink until the boot is
+#     good, then green for BOOT_OK_HOLD_S, then off; commands for the status
+#     LED are refused before the boot is good
 #   - the indicators and the status LED: colors, kernel triggers, software patterns
 #   - the red LED: the latch, the rule that red is never written when it is
 #     not ours, and no write at all while the boot is not good
@@ -29,6 +30,7 @@ python3 -I -B -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$PROG" &
 busybox sh -n "$INIT" && ok "the init script passes busybox sh -n" || bad "the init script: busybox sh -n"
 head -n 1 "$INIT" | grep -qx '#!/sbin/openrc-run' && ok "the init script is an OpenRC script" || bad "no openrc-run line"
 grep -qx 'PERSIST=no' "$CONF" && ok "the shipped config has PERSIST=no" || bad "the shipped config does not have PERSIST=no"
+grep -qx 'BOOT_OK_HOLD_S=10' "$CONF" && ok "the shipped config has BOOT_OK_HOLD_S=10" || bad "the shipped config does not have BOOT_OK_HOLD_S=10"
 grep -q 'uc-pxx-bootctl' "$PROG" && ok "the daemon names uc-pxx-bootctl" || bad "no bootctl"
 grep -Eq 'bootctl.*(mark-successful|arm|--file)|"(mark-successful|arm-trying)"' "$PROG" && bad "the daemon may call a bootctl command that writes" || ok "the daemon calls only 'bootctl status'"
 grep -c 'BOOTCTL, "status"' "$PROG" | grep -qx 1 && ok "bootctl runs in one place, with the argument status" || bad "bootctl is called in more than one place"

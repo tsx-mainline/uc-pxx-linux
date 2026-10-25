@@ -183,6 +183,7 @@ list(st.handle_message(pb.LightCommandRequest(key=st.key, has_effect=True, effec
 check("an unknown effect changes nothing", daemon.take(), [])
 # the state file drives the light
 for shown, want in (("blue heartbeat", (True, 0.0, 0.0, 1.0, "Heartbeat")), ("white blink slow", (True, 1.0, 1.0, 1.0, "Blink")),
+                    ("blue blink boot", (True, 0.0, 0.0, 1.0, "Blink")),
                     ("green blink fast", (True, 0.0, 1.0, 0.0, "Fast blink")), ("off solid", (False,))):
     setstate(shown=shown)
     st.poll()
@@ -190,10 +191,10 @@ for shown, want in (("blue heartbeat", (True, 0.0, 0.0, 1.0, "Heartbeat")), ("wh
 setstate(shown="magenta solid"); setstate(shown="garbage")
 check("a garbage state line sends nothing", st.poll(), None)
 # a refused command (the boot is not good): the poll shows the real state
-setstate(boot="wait", shown="blue heartbeat"); st.poll()
+setstate(boot="wait", shown="blue blink boot"); st.poll()
 daemon.answer = b"err boot-wait\n"
 cmd(state=True, red=1.0, green=0.0, blue=0.0)
-check("the command went to the daemon (the effect stays)", daemon.take(), ["status red heartbeat"])
+check("the command went to the daemon (the effect stays)", daemon.take(), ["status red blink slow"])
 r = st.poll()
 check("refused: the next poll sends the real state", (r.state, r.red, r.green, r.blue), (True, 0.0, 0.0, 1.0))
 daemon.answer = b"ok\n"
@@ -204,8 +205,8 @@ os.unlink(t + "/run/state")
 check("no state file: the daemon is not running", txt._get_state(), "Unavailable (uc-pxx-leds is not running)")
 check("and the lights keep their state", (st.poll(), teams.poll()), (None, None))
 setstate(boot="ok"); check("ok", txt._get_state(), "Free")
-setstate(boot="wait"); check("wait", txt._get_state(), "Boot (the boot is not marked good yet, blue heartbeat)")
-setstate(boot="locked"); check("locked", txt._get_state(), "Locked (slot A was changed in this boot, blue heartbeat)")
+setstate(boot="wait"); check("wait", txt._get_state(), "Boot (the boot is not marked good yet, slow blue blink)")
+setstate(boot="locked"); check("locked", txt._get_state(), "Locked (slot A was changed in this boot, slow blue blink)")
 setstate(boot="ok", red="latched"); check("red latched", txt._get_state(), "Free, red LED latched")
 setstate(boot="x"); check("unknown", txt._get_state(), "Unknown")
 

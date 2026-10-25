@@ -59,8 +59,9 @@ centre at the bottom.
 
 The LEDs are status indicators, not key backlights. They are on/off LEDs. The
 package `uc-pxx-leds` owns all seven of them ([leds.md](leds.md)). The RGB status
-LED shows the boot state. Blue with the heartbeat trigger means that slot A is
-not marked successful yet. Solid green means that it is. A lit `red` LED means
+LED shows the boot state. A slow blue blink means that slot A is not marked
+successful yet. Solid green for 10 seconds means that it is, then the LED goes
+dark. A lit `red` LED means
 that the A/B state is unknown and nobody may reboot
 ([boot-control.md](boot-control.md)).
 

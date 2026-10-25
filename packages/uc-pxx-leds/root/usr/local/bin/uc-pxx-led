@@ -11,7 +11,8 @@
   uc-pxx-led show
 
 COLOR is red, green, blue, yellow, cyan, magenta or white. The status LED
-accepts a command only after the boot is marked good. The user must be root or
+accepts a command only after the boot is marked good. "status auto" gives it
+back to the boot display: green for a short time after a good boot, then off. The user must be root or
 in the group of the socket (kiosk).
 
 Exit status: 0 done, 1 the daemon refused the command, 2 wrong usage, 3 the

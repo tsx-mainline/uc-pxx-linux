@@ -131,15 +131,22 @@ check("pattern: slow blink", [m.pattern("blink", "slow", x)[0] for x in (0.0, 0.
 check("pattern: fast blink", [m.pattern("blink", "fast", x)[0] for x in (0.0, 0.1, 0.13, 0.26)], [1, 1, 0, 1])
 check("pattern: heartbeat has two pulses", [m.pattern("heartbeat", None, x)[0] for x in (0.0, 0.1, 0.25, 0.3, 0.5)], [1, 0, 1, 0, 0])
 check("pattern: the wait is the time to the edge", round(m.pattern("blink", "slow", 0.2)[1], 3), 0.3)
+check("pattern: the boot blink is 0.5 s on, 1.5 s off", [m.pattern("blink", "boot", x)[0] for x in (0.0, 0.4, 0.6, 1.9, 2.1)],
+      [1, 1, 0, 0, 1])
 
-# ---- the start: indicators off, blue heartbeat while the boot is not good
+
+def delays(name):
+    return (get("%s/leds/%s/delay_on" % (t, name)), get("%s/leds/%s/delay_off" % (t, name)))
+
+
+# ---- the start: indicators off, slow blue blink while the boot is not good
 L = fresh(ok=False)
 check("boot wait at the start", L.boot, "wait")
 check("all indicators are off and have no trigger", [(led(x), trig(x)) for x in ALL[:4]], [(0, "none")] * 4)
-check("blue heartbeat, green off", (trig("blue"), led("green")), ("heartbeat", 0))
+check("slow blue blink, green off", (trig("blue"), delays("blue"), led("green")), ("timer", ("500", "1500"), 0))
 check("red is not touched while the boot is not good", (led("red"), trig("red")), (0, TRIG.strip()))
 check("the state file", state(L)["boot"], "wait")
-check("shown is blue heartbeat", state(L)["shown"], "blue heartbeat")
+check("shown is blue blink boot", state(L)["shown"], "blue blink boot")
 check("a status command is refused", (L.handle("status red"), L.status), ("err boot-wait", None))
 check("status auto is accepted", L.handle("status auto"), "ok")
 check("a bad line is refused", L.handle("nonsense"), "err bad-command")
@@ -154,6 +161,15 @@ check("slot A is successful: boot ok", L.boot, "ok")
 check("solid green, blue off and no trigger", (led("green"), led("blue"), trig("blue")), (1, 0, "none"))
 check("shown is green solid", state(L)["shown"], "green solid")
 check("the next poll is later when the boot is ok", L.boot_due, 1000.0 + m.POLL_WAIT + 1 + m.POLL_OK)
+OK_AT = 1000.0 + m.POLL_WAIT + 1
+check("the step wakes up at the end of the green hold", round(at(L, OK_AT + m.HOLD_DEFAULT - 0.2), 3), 0.2)
+check("green during the hold", (led("green"), state(L)["shown"]), (1, "green solid"))
+at(L, OK_AT + m.HOLD_DEFAULT)
+check("after the hold: the status LED is off", ([led(x) for x in ("red", "green", "blue")], state(L)["shown"], state(L)["status"]),
+      ([0, 0, 0], "off solid", "auto"))
+check("status auto: still off after the hold", (L.handle("status auto"), led("green")), ("ok", 0))
+check("a status command after the hold", (L.handle("status cyan"), led("green"), led("blue")), ("ok", 1, 1))
+check("status auto: the boot display, off", (L.handle("status auto"), led("green"), led("blue")), ("ok", 0, 0))
 bootctl(None)                       # unknown state: wait
 L.boot_due = 0; at(L, 2000.0)
 check("no 'current' line from bootctl: wait", L.boot, "wait")
@@ -248,8 +264,8 @@ L = fresh(); L.handle("status red")
 mark(True); at(L, 1002.0)
 check("the marker: boot locked", L.boot, "locked")
 check("the user's red stays on (nothing is written)", led("red"), 1)
-check("blue heartbeat, green off", (trig("blue"), led("green")), ("heartbeat", 0))
-check("shown: red lit plus blue heartbeat", state(L)["shown"], "magenta solid")
+check("slow blue blink, green off", (trig("blue"), led("green")), ("timer", 0))
+check("shown: red lit plus blue blink", state(L)["shown"], "magenta solid")
 check("status refused when locked", L.handle("status off"), "err boot-locked")
 check("indicators still work when locked", L.handle("ind teams on"), "ok")
 check("state file says locked", state(L)["boot"], "locked")
@@ -260,7 +276,7 @@ check("the marker is gone and bootctl says ok: boot ok again", L.boot, "ok")
 check("status auto is in effect: red goes off (it was ours)", (led("red"), led("green")), (0, 1))
 # a marker at the start
 mkleds(); mark(True); bootctl(1); L = m.Leds(); L.clock = lambda: NOW[0]; at(L, 1.0)
-check("marker at the start: locked, no bootctl needed", (L.boot, trig("blue")), ("locked", "heartbeat"))
+check("marker at the start: locked, no bootctl needed", (L.boot, trig("blue")), ("locked", "timer"))
 mark(False)
 
 # ---- no kernel trigger: the daemon blinks in software
@@ -295,7 +311,7 @@ mkleds(); put(t + "/conf", "PERSIST=yes\n"); put(t + "/saved", saved + "\n"); bo
 L = m.Leds(); L.clock = lambda: NOW[0]; at(L, 1000.0)
 check("after a restart the indicators come back", (led("teams_white"), trig("mute_red"), state(L)["mic"]), (1, "timer", "blink fast"))
 check("the status LED shows the boot state, not the saved color, until the boot is good", (state(L)["shown"], state(L)["status"]),
-      ("blue heartbeat", "magenta blink slow"))
+      ("blue blink boot", "magenta blink slow"))
 bootctl(1); L.boot_due = 0; at(L, 1001.0)
 check("boot ok: the saved status plays back", (state(L)["shown"], led("red")), ("magenta blink slow", 1))
 put(t + "/saved", "ind teams on\nrm -rf /\nstatus pink\nind tv on\nstatus red heartbeat\n"); put(t + "/conf", "PERSIST=yes\n")
@@ -303,6 +319,33 @@ mkleds(); bootctl(1); L = m.Leds()
 check("bad lines in the saved file are skipped, good ones are used", (L.ind["teams"], L.status), (("on", None), ("red", "heartbeat", None)))
 put(t + "/conf", "PERSIST=no\n"); L.read_conf()
 check("a reload reads the setting again", L.persist, False)
+
+# ---- the green hold setting
+L = fresh(conf="BOOT_OK_HOLD_S=0\n")
+check("BOOT_OK_HOLD_S=0", L.hold, 0)
+at(L, 1000.0 + 3600)
+check("BOOT_OK_HOLD_S=0: green stays on", (led("green"), state(L)["shown"]), (1, "green solid"))
+L = fresh(conf='BOOT_OK_HOLD_S="3"\n')
+at(L, 1002.9); a = led("green"); at(L, 1003.0); b = led("green")
+check("BOOT_OK_HOLD_S=3: green for 3 s, then off", (L.hold, a, b), (3, 1, 0))
+L = fresh(conf="BOOT_OK_HOLD_S=soon\n")
+check("a bad BOOT_OK_HOLD_S: the default", L.hold, m.HOLD_DEFAULT)
+L = fresh(conf="BOOT_OK_HOLD_S=-1\n")
+check("a negative BOOT_OK_HOLD_S: the default", L.hold, m.HOLD_DEFAULT)
+L = fresh()
+at(L, 1000.0 + m.HOLD_DEFAULT + 1)
+check("default hold: off after 10 s", led("green"), 0)
+mark(True); at(L, 1020.0)
+check("locked after the hold: the slow blue blink again", (trig("blue"), led("green")), ("timer", 0))
+mark(False); at(L, 1021.0)
+check("ok again: green for a new hold", (L.boot, led("green")), ("ok", 1))
+at(L, 1021.0 + m.HOLD_DEFAULT)
+check("and off after it", led("green"), 0)
+L = fresh(red=1)
+at(L, 1000.0 + m.HOLD_DEFAULT + 1)
+check("after the hold a latched red stays on", (led("red"), L.red_latched, state(L)["shown"]), (1, True, "red solid"))
+put(t + "/conf", "BOOT_OK_HOLD_S=0\n"); L.read_conf(); at(L, 1100.0)
+check("a reload reads BOOT_OK_HOLD_S again", (L.hold, led("green")), (0, 1))
 
 # ---- the state file and get
 L = fresh()
