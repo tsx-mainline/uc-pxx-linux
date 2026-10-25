@@ -45,7 +45,8 @@
 #               no root password and the installer sets one (docs/rootfs.md
 #               "Root login"). A public image never uses it. Example:
 #                 TSX_DEV_ROOT_HASH=$(openssl passwd -6 mypassword) ./build-rootfs.sh rootfs
-#   TSX_APK_LOCAL  required for rootfs and all: a local copy of the published
+#   TSX_APK_LOCAL  required for rootfs and all, optional for initramfs (the
+#               boot splash tsx-splash comes from <ALPINE>/common): a local copy of the published
 #               tree of this project's apk repository (tsx-aports), the folder
 #               that holds <ALPINE>/common and <ALPINE>/uc-pxx, for example
 #               from rootfs/fetch-apk-tree.sh. The build installs the profile
@@ -197,6 +198,12 @@ initramfs() {
 	dargs=(--rm --platform $PLATFORM -v "$REPO:/w" -e ALPINE="$ALPINE" -e UIDGID="$UIDGID")
 	if [ -s "$AUTHORIZED_KEYS" ]; then dargs+=(-v "$(readlink -f "$AUTHORIZED_KEYS"):/in/authorized_keys:ro" -e AUTHORIZED_KEYS=/in/authorized_keys); fi
 	in_file RTL8363_INIT "${RTL8363_INIT:-}"
+	if [ -n "${TSX_APK_LOCAL:-}" ]; then
+		need_apk_tree
+		dargs+=(-v "$(cd "$TSX_APK_LOCAL" && pwd):/aports:ro" -e TSX_APK_LOCAL=/aports)
+	else
+		echo "WARNING: no TSX_APK_LOCAL: the initramfs has no boot splash"
+	fi
 	docker run "${dargs[@]}" "$IMAGE" /w/rootfs/initramfs/mkinitramfs.sh /w/rootfs/out/initramfs.cpio
 }
 

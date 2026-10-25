@@ -16,6 +16,10 @@
 #                    no wired network
 #   AUTHORIZED_KEYS  optional, test builds only: ssh public keys that the
 #                    rescue dropbear accepts. Without it the rescue has no ssh
+#   TSX_APK_LOCAL    optional: the apk tree of tsx-aports. The boot splash
+#                    (tsx-splash of tsx-linux-common) comes from its
+#                    <ALPINE>/common, checked with the key of the image.
+#                    Without it the initramfs has no boot splash
 #   UIDGID           owner of OUT
 # The rescue has no root password. The shell on the serial console needs no
 # login.
@@ -38,6 +42,27 @@ if [ -n "${RTL8363_INIT:-}" ]; then
 	echo "rescue switch init: rtl8363-init ($(sha256sum "$RTL8363_INIT" | cut -c1-16))"
 else
 	echo "WARNING: no RTL8363_INIT: the rescue has no wired network"
+fi
+# The boot splash (docs/boot.md "The boot splash"): the program and the
+# images of the package tsx-splash. The program draws the largest image that
+# fits, so only the 1280x800 and 800x1280 images go in (the screen is 1920x1200
+# landscape or 1200x1920 portrait). The fonts draw the status line.
+if [ -n "${TSX_APK_LOCAL:-}" ]; then
+	A=${ALPINE:-v3.24}
+	cp /w/rootfs/overlay/etc/apk/keys/*.rsa.pub /etc/apk/keys/
+	printf '%s/%s/common\n' "$TSX_APK_LOCAL" "$A" > /tmp/splash-repos
+	cat /etc/apk/repositories >> /tmp/splash-repos
+	S=/tmp/splash-root; rm -rf $S; mkdir -p $S
+	apk add --root $S --initdb --no-cache -q --repositories-file /tmp/splash-repos --keys-dir /etc/apk/keys tsx-splash
+	install -D -m 755 $S/usr/local/bin/tsx-splash $R/usr/sbin/tsx-splash
+	mkdir -p $R/usr/share/tsx/splash
+	for f in font-16.psf font-24.psf splash-1280x800.ppm splash-800x1280.ppm; do
+		cp $S/usr/share/tsx/splash/$f $R/usr/share/tsx/splash/$f
+	done
+	echo "boot splash: $(apk info --root $S -v tsx-splash 2>/dev/null | head -n 1)"
+	rm -rf $S
+else
+	echo "WARNING: no TSX_APK_LOCAL: the initramfs has no boot splash"
 fi
 sed -i 's|^root:[^:]*:|root:*:|' $R/etc/shadow
 if [ -n "${AUTHORIZED_KEYS:-}" ] && [ -s "$AUTHORIZED_KEYS" ]; then

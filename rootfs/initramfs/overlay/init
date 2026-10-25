@@ -23,6 +23,12 @@
 # system. This script does not read or change it.
 # Root file system file:
 #   /etc/uc-pxx-force-rescue   start the rescue system once (the file is removed)
+#
+# Screen: fbcon=map:1 on the command line keeps the console text off the
+# LCD. tsx-splash draws the boot splash on fb0 as soon as rockchip-drm has
+# made it. The rescue and the console profile (/etc/tsx/profile is
+# "console") get the text console back on fb0 first (docs/boot.md "The boot
+# splash").
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
@@ -37,7 +43,28 @@ msg() {
 	echo "uc-pxx-initramfs: $*" >> "$LOG"
 }
 
+# The boot splash. An initramfs without tsx-splash has none.
+SPLASH=/usr/sbin/tsx-splash
+splashed=
+# splash: draw the splash once, when fb0 exists
+splash() {
+	[ -z "$splashed" ] && [ -x "$SPLASH" ] && [ -e /dev/fb0 ] || return 0
+	if "$SPLASH" -o landscape -s "Starting" -p -1 show 2>/dev/null; then
+		splashed=1; msg "boot splash on fb0"
+	fi
+}
+# text_console: map the console back to fb0 and turn it upright
+text_console() {
+	[ -x "$SPLASH" ] && [ -e /dev/fb0 ] || return 0
+	"$SPLASH" console 2>/dev/null || { msg "cannot map the console to fb0"; return 0; }
+	r=$(tr ' ' '\n' < /proc/cmdline | sed -n 's/^fbcon=rotate:\([0-3]\)$/\1/p' | tail -n 1)
+	[ -z "$r" ] || echo "$r" > /sys/class/graphics/fbcon/rotate_all 2>/dev/null
+	splashed=
+	msg "text console on fb0"
+}
+
 rescue() {
+	text_console
 	msg "RESCUE: $*"
 	echo "$*" > /run/uc-pxx-rescue-reason
 	mountpoint -q /newroot && umount /newroot 2>/dev/null
@@ -56,6 +83,11 @@ for c in $(cat /proc/cmdline); do
 done
 case $wait in ''|*[!0-9]*) wait=15;; esac
 msg "start, kernel $(uname -r)"
+# fb0 comes when rockchip-drm has bound the panel. Wait at most 3 s for it.
+i=0
+while [ ! -e /dev/fb0 ] && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+[ -e /dev/fb0 ] || msg "no fb0 after 3 s: the splash comes later or not at all"
+splash
 [ -n "$want_rescue" ] && rescue "uc-pxx.rescue is on the kernel command line"
 
 # part_by_name NAME: the block device of the eMMC partition with that GPT name
@@ -85,6 +117,7 @@ end=$(( $(up) + wait ))
 dev=
 while :; do
 	dev=$(find_root) && break
+	splash
 	[ "$(up)" -ge "$end" ] && break
 	sleep 0.25
 done
@@ -133,6 +166,12 @@ fi
 mkdir -p /newroot/var/log
 cp /run/fsck.log /newroot/var/log/initramfs-fsck.log 2>/dev/null
 cp /run/resize.log /newroot/var/log/initramfs-resize.log 2>/dev/null
+# The console profile has a login on tty1: give it the screen.
+if [ "$(cat /newroot/etc/tsx/profile 2>/dev/null)" = console ]; then
+	text_console
+else
+	splash
+fi
 msg "switch_root to $dev, $init"
 umount /dev/pts 2>/dev/null
 for m in /dev /proc /sys /run; do

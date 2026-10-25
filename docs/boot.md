@@ -141,6 +141,36 @@ The build takes `RTL8363_INIT` (the tool of `tools/rtl8363-init`, built with
 the Realtek SDK) and `AUTHORIZED_KEYS` as files. This repository holds
 neither of them.
 
+### The boot splash
+
+The command line has `fbcon=map:1`. The framebuffer console then maps to a
+framebuffer that does not exist, so no console text reaches the LCD.
+`tsx-splash` (package `tsx-splash` of tsx-linux-common) owns `fb0`:
+
+1. `/init` waits up to 3 seconds for `/dev/fb0`. `rockchip-drm` makes it
+   when it has bound the panel.
+2. `/init` draws the splash with the status line "Starting", as soon as `fb0`
+   exists. If `fb0` comes later, `/init` draws it while it waits for the
+   root partition, or before `switch_root`.
+3. The splash stays on the screen until the compositor of the kiosk takes the
+   display.
+
+The panel is 1200x1920 and is mounted turned (`fbcon=rotate:3`). `tsx-splash`
+reads this number from the command line and turns the landscape frame onto
+the panel. It draws the largest image that fits, centered on black. The
+initramfs holds the 1280x800 and 800x1280 images of the package.
+
+The rescue system and the console profile (`/etc/tsx/profile` is `console`,
+with a login on `tty1`) get the text console back first: `tsx-splash
+console` maps the console to `fb0`, and `/init` sets the rotation of the
+console from `fbcon=rotate:N`. `vt.global_cursor_default=0` hides the cursor.
+The kernel has no boot logo.
+
+`rootfs/build-rootfs.sh initramfs` installs `tsx-splash` from the apk tree
+`TSX_APK_LOCAL` (`<ALPINE>/common`). apk checks the package with the key of
+the image. Without `TSX_APK_LOCAL` the initramfs has no splash, and the LCD
+stays dark until the kiosk starts.
+
 ## A/B metadata
 
 The slot state is a libavb AvbABData structure in the `misc` partition at LBA
