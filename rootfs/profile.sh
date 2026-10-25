@@ -11,6 +11,10 @@
 #                                       into ROOTFS (the packages own all other
 #                                       files). A file of profiles/PROFILE/overlay
 #                                       wins over the file of the same path in overlay
+#   profile.sh modes SRCDIR ROOTFS      set fixed modes on the copy of SRCDIR in ROOTFS:
+#                                       755 for directories and for files with an
+#                                       execute bit in SRCDIR, else 644. The modes do
+#                                       not depend on the umask of the checkout
 #
 # The profiles are console, kiosk and ha. Each one holds all the earlier ones.
 # profiles/<name>.list holds the entries that the profile adds. mkrootfs.sh and
@@ -41,6 +45,11 @@ entries() {
 	done
 }
 
+# fixmode SRC DEST: DEST gets 755 when SRC is a directory or has an execute bit, else 644
+fixmode() {
+	if [ -d "$1" ] || [ -x "$1" ]; then chmod 755 "$2"; else chmod 644 "$2"; fi
+}
+
 cmd=${1:-}; [ $# -gt 0 ] && shift
 case "$cmd" in
 includes) [ $# = 1 ] || die "usage: includes PROFILE"; includes "$1";;
@@ -60,6 +69,7 @@ packages)
 stage)
 	[ $# = 2 ] || die "usage: stage PROFILE ROOTFS"
 	p=$1; R=$2
+	umask 022
 	includes "$p" >/dev/null
 	[ -r "$PD/image.list" ] || die "no $PD/image.list"
 	mkdir -p "$R"
@@ -71,8 +81,16 @@ stage)
 		elif [ -e "$OV/$f" ]; then src=$OV/$f
 		else continue; fi
 		mkdir -p "$R/$(dirname "$f")"
-		cp -aL "$src" "$R/$f"
+		cp -L "$src" "$R/$f"
+		fixmode "$src" "$R/$f"
 	done
 	exit 0;;
-*) sed -n '2,16p' "$0" >&2; exit 2;;
+modes)
+	[ $# = 2 ] || die "usage: modes SRCDIR ROOTFS"
+	[ -d "$1" ] && [ -d "$2" ] || die "modes: both arguments must be directories"
+	(cd "$1" && find . ! -type l ! -name . -print) | while read -r f; do
+		[ -e "$2/$f" ] && fixmode "$1/$f" "$2/$f"
+	done
+	exit 0;;
+*) sed -n '2,20p' "$0" >&2; exit 2;;
 esac

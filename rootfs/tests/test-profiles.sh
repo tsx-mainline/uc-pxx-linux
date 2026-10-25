@@ -117,6 +117,18 @@ eq "$(cat "$T/win/etc/fstab")" overlay "without a profile file, the file of the 
 rm -rf "$T/win"; echo linked > "$T/target"; ln -s "$T/target" "$T/pd/ha/overlay/etc/fstab"
 TSX_PROFILE_DIR=$T/pd TSX_OVERLAY_DIR=$T/ov sh "$PS" stage ha "$T/win" >/dev/null
 [ ! -L "$T/win/etc/fstab" ] && eq "$(cat "$T/win/etc/fstab")" linked "stage follows a link: the image holds the file" || bad "stage keeps a link"
+# the modes do not depend on the umask of the checkout
+rm -rf "$T/win" "$T/pd/ha/overlay/etc/fstab" "$T/ov"; mkdir -p "$T/ov/etc/tsx"
+echo a > "$T/ov/etc/fstab"; echo b > "$T/ov/etc/tsx/run"; chmod 664 "$T/ov/etc/fstab"; chmod 775 "$T/ov/etc/tsx/run"
+printf 'image etc/fstab\nimage etc/tsx/run\n' > "$T/pd/image.list"
+(umask 002; TSX_PROFILE_DIR=$T/pd TSX_OVERLAY_DIR=$T/ov sh "$PS" stage ha "$T/win" >/dev/null)
+eq "$(stat -c %a "$T/win/etc/fstab")" 644 "stage: a group-writable file gets 644"
+eq "$(stat -c %a "$T/win/etc/tsx/run")" 755 "stage: a group-writable executable gets 755"
+eq "$(stat -c %a "$T/win/etc" "$T/win/etc/tsx" | tr '\n' ' ')" "755 755 " "stage: new directories get 755 (umask 002)"
+mkdir -p "$T/dst/etc/tsx"; cp "$T/ov/etc/fstab" "$T/dst/etc/"; cp "$T/ov/etc/tsx/run" "$T/dst/etc/tsx/"; chmod 664 "$T/dst/etc/fstab"; chmod 775 "$T/dst/etc" "$T/dst/etc/tsx"
+ln -s fstab "$T/ov/etc/link"
+sh "$PS" modes "$T/ov" "$T/dst"
+eq "$(stat -c %a "$T/dst/etc/fstab" "$T/dst/etc/tsx/run" "$T/dst/etc" "$T/dst/etc/tsx" | tr '\n' ' ')" "644 755 755 755 " "modes: file, executable and directories get fixed modes"
 # the old commands are gone
 sh "$PS" stage-image ha "$T/x" >/dev/null 2>&1 && bad "stage-image still exists" || ok "stage-image is gone (stage copies the image files only)"
 sh "$PS" unclassified >/dev/null 2>&1 && bad "unclassified still exists" || ok "unclassified is gone"

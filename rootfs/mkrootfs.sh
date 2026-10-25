@@ -180,6 +180,8 @@ if [ "$DEV" = 1 ]; then
 	log "DEV: rootfs/overlay, packages/uc-pxx-leds/root, uc-pxx-bootctl, rtl8363-init"
 	for d in "$HERE/overlay" "$TOP/packages/uc-pxx-leds/root"; do
 		(cd "$d" && tar --owner=0 --group=0 --numeric-owner -cf - .) | tar -C $R -xpf -
+		# fixed modes, whatever the umask of the checkout
+		sh "$HERE/profile.sh" modes "$d" $R
 	done
 	install -m 755 -o 0 -g 0 "$UC_PXX_BOOTCTL" $R/usr/sbin/uc-pxx-bootctl
 	install -m 755 -o 0 -g 0 "$RTL8363_INIT" $R/usr/sbin/rtl8363-init
