@@ -1,16 +1,15 @@
 #!/sbin/openrc-run
-# Volume down + Mute held for 10 seconds: restart into the loader mode
-# (uc-pxx-loader-key). The unit writes nothing to the eMMC.
-description="Hold Volume down + Mute for 10 s: reboot into the loader mode"
-supervisor=supervise-daemon
-command=/usr/local/sbin/uc-pxx-loader-key
-respawn_delay=5
-respawn_max=0
-output_log=/var/log/uc-pxx-loader-key.log
-error_log=/var/log/uc-pxx-loader-key.log
+# The boot window of the loader mode: Volume down + Mute held for 3 seconds in
+# the first 60 seconds of uptime restart the unit into the loader mode
+# (uc-pxx-loader-key). The service is in the sysinit runlevel. It needs only
+# the input device node, which the kernel makes in devtmpfs, so it starts
+# before udev and does not wait for udev-settle. The program ends itself at 60
+# s of uptime. There is no supervisor, so nothing starts it again. The unit
+# writes nothing to the eMMC.
+description="Hold Volume down + Mute for 3 s in the first 60 s: reboot into the loader mode"
 depend() {
-	need localmount
-	after udev-settle
+	after devfs
+	before udev
 }
 start() {
 	# a unit without the touch keys: nothing to run, no failure
@@ -18,9 +17,12 @@ start() {
 		einfo "uc-pxx-loader-key: no touch key device here, not started"
 		return 0
 	fi
-	default_start
+	ebegin "Watching Volume down + Mute for the loader mode"
+	/usr/local/sbin/uc-pxx-loader-key < /dev/null >> /run/uc-pxx-loader-key.log 2>&1 &
+	eend 0
 }
 stop() {
-	[ -e "/run/supervise-$RC_SVCNAME.pid" ] || return 0
-	default_stop
+	[ -r /run/uc-pxx-loader-key.pid ] || return 0
+	kill "$(cat /run/uc-pxx-loader-key.pid)" 2>/dev/null
+	return 0
 }

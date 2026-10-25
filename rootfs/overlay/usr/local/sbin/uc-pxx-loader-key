@@ -1,29 +1,44 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# uc-pxx-loader-key: hold Volume down and Mute (the mic key) for about 10
-# seconds at any time, and the unit restarts into the loader (download) mode
-# with `uc-pxx-reboot loader`. That command lets init stop the services and
+# uc-pxx-loader-key: hold Volume down and Mute (the mic key) for 3 seconds,
+# and the unit restarts into the loader (download) mode with
+# `uc-pxx-reboot loader`. That command lets init stop the services and
 # remount the file systems read-only first. The stock Android system did
 # this itself, and mainline has to do it too. The unit then waits for a host
 # (rockusb). It writes nothing to the eMMC. A power cycle leaves the loader
 # mode.
 #
+# The program watches only for a limited time, so a long press in daily use
+# can never restart the panel:
+#   (no argument)   the boot window: the program ends with exit 0 when the
+#                   uptime is UC_PXX_END_S (60) seconds. A hold that is in
+#                   progress at that time still gets its 3 seconds.
+#   --rescue        no end. The rescue system runs it for the whole session.
+#
 # The two keys are touch keys of the maXTouch controller: KEY_MUTE (113) and
 # KEY_VOLUMEDOWN (114) in rootfs/overlay/etc/tsx/buttons-board.conf. tsx-idled
 # grabs the input devices, so this program does not read events. It polls the
 # key state of the device with `evtest --query` (EVIOCGKEY).
+# The controller calibrates when the driver probes (about 2.4 s after the
+# kernel start). A finger that is on a key at that time becomes the zero level,
+# and the key reads "up" until the finger is lifted and put down again.
 #
-#   uc-pxx-loader-key            the service loop
-#   uc-pxx-loader-key --probe    exit 0 if the key device exists
-# Env (tests): UC_PXX_HOLD_S (10), UC_PXX_POLL_S (0.5), UC_PXX_SYSINPUT
-# (/sys/class/input), UC_PXX_DEVINPUT (/dev/input), UC_PXX_EVTEST (evtest),
-# UC_PXX_REBOOT (uc-pxx-reboot), UC_PXX_ONCE (1: end after one reboot call).
-HOLD=${UC_PXX_HOLD_S:-10}
-POLL=${UC_PXX_POLL_S:-0.5}
+#   uc-pxx-loader-key [--rescue]   the watcher
+#   uc-pxx-loader-key --probe      exit 0 if the key device exists
+# Env (tests): UC_PXX_HOLD_S (3), UC_PXX_END_S (60), UC_PXX_POLL_S (0.3),
+# UC_PXX_SYSINPUT (/sys/class/input), UC_PXX_DEVINPUT (/dev/input),
+# UC_PXX_EVTEST (evtest), UC_PXX_REBOOT (uc-pxx-reboot), UC_PXX_UPTIME
+# (/proc/uptime), UC_PXX_PIDFILE (/run/uc-pxx-loader-key.pid), UC_PXX_ONCE
+# (1: end after one reboot call).
+HOLD=${UC_PXX_HOLD_S:-3}
+END=${UC_PXX_END_S:-60}
+POLL=${UC_PXX_POLL_S:-0.3}
 SYSIN=${UC_PXX_SYSINPUT:-/sys/class/input}
 DEVIN=${UC_PXX_DEVINPUT:-/dev/input}
 EVTEST=${UC_PXX_EVTEST:-evtest}
 REBOOT=${UC_PXX_REBOOT:-uc-pxx-reboot}
+UPTIME=${UC_PXX_UPTIME:-/proc/uptime}
+PIDFILE=${UC_PXX_PIDFILE:-/run/uc-pxx-loader-key.pid}
 log() { echo "uc-pxx-loader-key: $*"; echo "uc-pxx-loader-key: $*" > /dev/kmsg 2>/dev/null; }
 
 # the event node of the touch controller (the keys T15 are part of it)
@@ -41,15 +56,35 @@ held() {
 	"$EVTEST" --query "$1" EV_KEY KEY_MUTE 2>/dev/null; [ $? = 10 ] || return 1
 	"$EVTEST" --query "$1" EV_KEY KEY_VOLUMEDOWN 2>/dev/null; [ $? = 10 ]
 }
+# cs: the uptime in 1/100 seconds
+cs() {
+	read -r up _ < "$UPTIME" || up=0
+	f=${up#*.}00; f=${f%${f#??}}; f=${f#0}
+	echo $((${up%.*} * 100 + ${f:-0}))
+}
 
 [ "${1:-}" = --probe ] && { keydev > /dev/null; exit; }
-log "watching Volume down + Mute (hold ${HOLD} s for the loader mode)"
+[ "${1:-}" = --rescue ] && END=
+case $HOLD$END in *[!0-9]*) echo "uc-pxx-loader-key: UC_PXX_HOLD_S and UC_PXX_END_S must be whole numbers" >&2; exit 2;; esac
+echo $$ > "$PIDFILE" 2>/dev/null
+trap 'rm -f "$PIDFILE"' EXIT
+trap 'exit 143' TERM INT
+if [ -n "$END" ]; then
+	log "watching Volume down + Mute until ${END} s of uptime (hold ${HOLD} s for the loader mode)"
+else
+	log "watching Volume down + Mute (hold ${HOLD} s for the loader mode)"
+fi
 since=
 while :; do
+	now=$(cs)
+	# after the window only a hold that is already running goes on
+	if [ -z "$since" ] && [ -n "$END" ] && [ "$now" -ge $((END * 100)) ]; then
+		log "the boot window of ${END} s is over: the watcher ends"
+		exit 0
+	fi
 	if dev=$(keydev) && held "$dev"; then
-		now=$(cut -d. -f1 /proc/uptime)
 		[ -n "$since" ] || since=$now
-		if [ $((now - since)) -ge "$HOLD" ]; then
+		if [ $((now - since)) -ge $((HOLD * 100)) ]; then
 			log "Volume down + Mute held for ${HOLD} s: restarting into the loader mode"
 			"$REBOOT" loader || log "$REBOOT loader failed"
 			[ -z "${UC_PXX_ONCE:-}" ] || exit 0

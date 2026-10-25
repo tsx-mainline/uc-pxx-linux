@@ -76,6 +76,8 @@ install -D -m 644 /w/rootfs/overlay/usr/local/lib/tsx/board.sh $R/usr/local/lib/
 install -D -m 755 "$UC_PXX_BOOTCTL" $R/usr/sbin/uc-pxx-bootctl
 install -D -m 755 "$UC_PXX_REBOOT" $R/usr/libexec/uc-pxx-reboot-syscall
 install -D -m 755 /w/rootfs/overlay/usr/sbin/uc-pxx-reboot $R/usr/sbin/uc-pxx-reboot
+# the watcher of Volume down + Mute (the rescue runs it with --rescue, inittab)
+install -D -m 755 /w/rootfs/overlay/usr/local/sbin/uc-pxx-loader-key $R/usr/local/sbin/uc-pxx-loader-key
 [ "$(sha256sum $R/usr/sbin/uc-pxx-bootctl | cut -d' ' -f1)" = "$BOOTCTL_SHA256" ] || { echo "mkinitramfs.sh: uc-pxx-bootctl changed in the copy"; exit 1; }
 # Terminus bold console fonts for tsx-confont (SIL OFL 1.1). It picks the
 # largest one that gives at least 80x25 cells on the console: 16x32 on the

@@ -52,8 +52,9 @@ for f in packages.txt packages-tsx.txt; do
 	sh "$PS" packages ha "$HERE/$f" > "$T/ha.$f"
 	cmp -s "$T/all.$f" "$T/ha.$f" && ok "$f: same lines in the same order" || bad "$f: ha differs from the file"
 done
-want_default="networking chronyd sshd seatd crond uc-pxx-audio uc-pxx-als uc-pxx-presence uc-pxx-loader-key tsx-buttons tsx-idled tsx-panelctl tsx-bt dbus avahi-daemon tsx-sendspin tsx-esphome tsx-mqtt tsx-autoupdate tsx-setup-helper tsx-setupd kiosk uc-pxx-leds uc-pxx-boot-ok local"
+want_default="networking chronyd sshd seatd crond uc-pxx-audio uc-pxx-als uc-pxx-presence tsx-buttons tsx-idled tsx-panelctl tsx-bt dbus avahi-daemon tsx-sendspin tsx-esphome tsx-mqtt tsx-autoupdate tsx-setup-helper tsx-setupd kiosk uc-pxx-leds uc-pxx-boot-ok local"
 eq "$(sh "$PS" entries ha svc | awk '$1 == "default" { print $2 }' | sort | tr '\n' ' ')" "$(echo $want_default | tr ' ' '\n' | sort | tr '\n' ' ')" "ha: the services of the default runlevel"
+eq "$(sh "$PS" entries ha svc | awk '$1 == "sysinit" { print $2 }' | tr '\n' ' ')" "uc-pxx-loader-key " "ha: the services of the sysinit runlevel"
 eq "$(sh "$PS" entries ha svc | awk '$1 == "boot" { print $2 }' | sort | tr '\n' ' ')" "tsx-config tsx-data tsx-hostname tsx-setup uc-pxx-clock uc-pxx-firmware uc-pxx-lvm uc-pxx-switch uc-pxx-watchdog " "ha: the services of the boot runlevel"
 eq "$(sh "$PS" entries ha user | sort | tr '\n' ' ')" "kiosk tsx-setup " "ha: the users"
 for s in firmware lva; do sh "$PS" has ha step $s && ok "ha: build step $s" || bad "ha: no build step $s"; done

@@ -8,7 +8,7 @@
 # rootfs/overlay.
 #   step     build step of mkrootfs.sh (the profile has the step, or it has not)
 #   pkg      Alpine or tsx-aports package, from packages.txt or packages-tsx.txt
-#   svc      OpenRC service: svc RUNLEVEL NAME (boot or default)
+#   svc      OpenRC service: svc RUNLEVEL NAME (sysinit, boot or default)
 #   user     system user that mkrootfs.sh adds
 
 step firmware
@@ -73,7 +73,7 @@ svc boot tsx-hostname
 svc default uc-pxx-audio
 svc default uc-pxx-als
 svc default uc-pxx-presence
-svc default uc-pxx-loader-key
+svc sysinit uc-pxx-loader-key
 svc default tsx-idled
 svc default tsx-buttons
 svc default tsx-panelctl

@@ -4,6 +4,10 @@
 # The LCD shows the rescue screen (tsx-rescue-status of tsx-linux-common).
 # Enter on a USB keyboard (tty1) opens a root shell on the LCD.
 tty1::respawn:/usr/sbin/tsx-rescue-status loop
+# The loader mode in the rescue: Volume down + Mute held for 3 s run
+# `uc-pxx-reboot loader`. The watcher has no end time here. The rescue is a
+# recovery state, not daily use.
+::respawn:/usr/local/sbin/uc-pxx-loader-key --rescue
 # A root shell on the serial console (ttyS2, 115200, the debug UART). Only a
 # person with the debug cable can reach it.
 ::respawn:/bin/sh -c "[ -c /dev/ttyS2 ] && exec /sbin/getty -n -l /bin/sh -L 115200 ttyS2 vt100 || exec sleep 2147483647"

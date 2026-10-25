@@ -6,6 +6,10 @@
 #   - the device is the maXTouch controller, no other device
 #   - both keys down for the hold time: uc-pxx-reboot loader runs once
 #   - one key only, or a release before the end: no reboot
+#   - the boot window: the watcher ends with exit 0 at 60 s of uptime and
+#     removes its pid file. A press after that does nothing. The OpenRC script
+#     has no supervisor, so nothing starts the watcher again. It is in sysinit
+#   - --rescue: no end time, and inittab of the initramfs runs it
 #   - /init: the same rule with a hold of 3 s, and no delay with no key down
 #   - the device tree node and the reboot program
 set -u
@@ -44,9 +48,14 @@ cat > "$T/reboot" <<EOS
 echo "\$*" >> "$T/reboot.calls"
 EOS
 chmod 755 "$T/evtest" "$T/reboot"
-export UC_PXX_SYSINPUT=$T/sys UC_PXX_DEVINPUT=$T/dev UC_PXX_EVTEST=$T/evtest UC_PXX_REBOOT=$T/reboot UC_PXX_POLL_S=0.2 UC_PXX_ONCE=1
+echo "10.00 40.00" > "$T/uptime"
+export UC_PXX_SYSINPUT=$T/sys UC_PXX_DEVINPUT=$T/dev UC_PXX_EVTEST=$T/evtest UC_PXX_REBOOT=$T/reboot UC_PXX_POLL_S=0.2 UC_PXX_ONCE=1 UC_PXX_UPTIME=/proc/uptime UC_PXX_END_S=999999999 UC_PXX_PIDFILE=$T/pid
 reboots() { cat "$T/reboot.calls" 2>/dev/null | wc -l | tr -d ' '; }
 reset() { rm -f "$T"/down.* "$T/reboot.calls" "$T/evtest.calls"; }
+
+echo "== the defaults =="
+grep -q 'HOLD=${UC_PXX_HOLD_S:-3}' "$LK" && grep -q 'END=${UC_PXX_END_S:-60}' "$LK" && ok "default: hold 3 s, window end 60 s of uptime" || bad "wrong defaults"
+grep -q 'POLL=${UC_PXX_POLL_S:-0.3}' "$LK" && ok "default poll 0.3 s" || bad "wrong poll"
 
 echo "== the service loop (hold 2 s in the test) =="
 eq "$(UC_PXX_SYSINPUT=$T/sys busybox sh "$LK" --probe; echo $?)" 0 "--probe: the touch controller is found"
@@ -69,6 +78,60 @@ reset; touch "$T/down.event0.KEY_MUTE" "$T/down.event0.KEY_VOLUMEDOWN"
 UC_PXX_HOLD_S=3 timeout 6 busybox sh "$LK" > "$T/out" 2>&1
 wait
 eq "$(reboots)" 0 "a key released before the hold time: no reboot"
+
+echo "== the boot window =="
+# a fake uptime that the test advances: 58.50 s, then 60.20 s after 1 s
+reset; echo "58.50 1.0" > "$T/uptime"
+( sleep 1; echo "60.20 1.0" > "$T/uptime" ) &
+s=$(date +%s); UC_PXX_HOLD_S=3 timeout 6 env UC_PXX_UPTIME=$T/uptime UC_PXX_END_S=60 busybox sh "$LK" > "$T/out" 2>&1; rc=$?
+wait
+eq "$rc" 0 "no key: the watcher ends with exit 0 at 60 s of uptime"
+grep -q 'the boot window of 60 s is over' "$T/out" && ok "and it logs the end" || bad "no end line: $(cat "$T/out")"
+[ ! -e "$T/pid" ] && ok "and it removes its pid file" || bad "the pid file stays"
+eq "$(reboots)" 0 "no reboot at the end"
+# keys down after the end: the watcher is gone, so nothing reboots
+touch "$T/down.event0.KEY_MUTE" "$T/down.event0.KEY_VOLUMEDOWN"
+echo "75.00 1.0" > "$T/uptime"
+timeout 3 env UC_PXX_UPTIME=$T/uptime UC_PXX_END_S=60 busybox sh "$LK" > "$T/out" 2>&1; rc=$?
+eq "$rc" 0 "start after the window with both keys down: ends at once"
+eq "$(reboots)" 0 "and it does not reboot (a long press in daily use does nothing)"
+# a hold that began inside the window gets its time to the end
+reset; echo "59.00 1.0" > "$T/uptime"; touch "$T/down.event0.KEY_MUTE" "$T/down.event0.KEY_VOLUMEDOWN"
+( sleep 0.5; echo "61.00 1.0" > "$T/uptime"; sleep 0.5; echo "62.50 1.0" > "$T/uptime"; sleep 0.5; echo "63.50 1.0" > "$T/uptime" ) &
+UC_PXX_HOLD_S=3 timeout 8 env UC_PXX_UPTIME=$T/uptime UC_PXX_END_S=60 busybox sh "$LK" > "$T/out" 2>&1
+wait
+eq "$(cat "$T/reboot.calls" 2>/dev/null)" "loader" "a hold that began at 59 s still reaches 3 s and reboots"
+# the 3 s hold in uptime time: 2.5 s is not enough, 3.0 s is
+reset; echo "10.00 1.0" > "$T/uptime"; touch "$T/down.event0.KEY_MUTE" "$T/down.event0.KEY_VOLUMEDOWN"
+( sleep 0.7; echo "12.50 1.0" > "$T/uptime"; sleep 1; echo "12.90 1.0" > "$T/uptime"; sleep 1; echo "13.00 1.0" > "$T/uptime" ) &
+UC_PXX_HOLD_S=3 timeout 8 env UC_PXX_UPTIME=$T/uptime UC_PXX_END_S=60 busybox sh "$LK" > "$T/out" 2>&1
+wait
+eq "$(cat "$T/reboot.calls" 2>/dev/null)" "loader" "the hold reboots at 3.00 s"
+reset; echo "10.00 1.0" > "$T/uptime"; touch "$T/down.event0.KEY_MUTE" "$T/down.event0.KEY_VOLUMEDOWN"
+( sleep 0.7; echo "12.90 1.0" > "$T/uptime"; sleep 1; rm -f "$T"/down.event0.KEY_MUTE ) &
+UC_PXX_HOLD_S=3 timeout 4 env UC_PXX_UPTIME=$T/uptime UC_PXX_END_S=60 busybox sh "$LK" > "$T/out" 2>&1
+wait
+eq "$(reboots)" 0 "2.9 s and then a release: no reboot"
+echo "== --rescue: no end time =="
+timeout 2 env UC_PXX_END_S=1 busybox sh "$LK" --rescue > "$T/out" 2>&1; rc=$?
+[ "$rc" != 0 ] && ok "--rescue with UC_PXX_END_S=1 keeps running until the timeout (rc $rc)" || bad "--rescue ended by itself"
+grep -q 'the boot window' "$T/out" && bad "--rescue logged a window end" || ok "--rescue has no window"
+reset; touch "$T/down.event0.KEY_MUTE" "$T/down.event0.KEY_VOLUMEDOWN"
+UC_PXX_HOLD_S=1 timeout 6 busybox sh "$LK" --rescue > "$T/out" 2>&1
+eq "$(cat "$T/reboot.calls" 2>/dev/null)" "loader" "--rescue: both keys down for the hold time: uc-pxx-reboot loader"
+reset; echo "10.00 1.0" > "$T/uptime"
+RI=$HERE/initramfs/overlay/etc/inittab
+grep -qx '::respawn:/usr/local/sbin/uc-pxx-loader-key --rescue' "$RI" && ok "the rescue inittab respawns the watcher with --rescue" || bad "no watcher line in the rescue inittab"
+grep -q 'uc-pxx-loader-key' "$HERE/initramfs/mkinitramfs.sh" && ok "mkinitramfs.sh installs the watcher" || bad "mkinitramfs.sh does not install the watcher"
+grep -q 'loader' "$HERE/initramfs/overlay/usr/sbin/uc-pxx-rescue-help" && ok "the rescue help names the loader mode" || bad "no loader line in the rescue help"
+
+echo "== the OpenRC script and the runlevel =="
+OS=$HERE/overlay/etc/init.d/uc-pxx-loader-key
+grep -Eq '^(supervisor|respawn_|command_background|command=)' "$OS" && bad "the OpenRC script has a supervisor or respawn setting" || ok "no supervisor, no respawn"
+grep -q 'after devfs' "$OS" && grep -q 'before udev' "$OS" && ok "the script starts after devfs and before udev" || bad "wrong order"
+grep -v '^#' "$OS" | grep -Eq 'need|udev-settle|localmount' && bad "the script waits for a service" || ok "no need on udev-settle or localmount"
+awk '$1 == "svc" && $2 == "sysinit" && $3 == "uc-pxx-loader-key" { f = 1 } END { exit !f }' "$HERE/profiles/console.list" && ok "console.list: runlevel sysinit" || bad "not in sysinit"
+grep -q 'TSX_SVC_SYSINIT' "$HERE/mkrootfs.sh" && ok "mkrootfs.sh adds the sysinit services" || bad "mkrootfs.sh has no sysinit list"
 
 echo "== /init: the check at the boot =="
 # take the functions loader_dev, loader_held, loader_show, loader_check out of /init

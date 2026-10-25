@@ -260,6 +260,7 @@ done
 log "users, services"
 # The profile decides which services start and which users exist. The lists
 # are in profiles/*.list. The chroot shell reads them from its environment.
+TSX_SVC_SYSINIT=$(sh "$HERE/profile.sh" entries "$PROFILE" svc | awk '$1 == "sysinit" { print $2 }' | tr '\n' ' ')
 TSX_SVC_BOOT=$(sh "$HERE/profile.sh" entries "$PROFILE" svc | awk '$1 == "boot" { print $2 }' | tr '\n' ' ')
 TSX_SVC_DEFAULT=$(sh "$HERE/profile.sh" entries "$PROFILE" svc | awk '$1 == "default" { print $2 }' | tr '\n' ' ')
 if [ "$DEV" = 1 ]; then
@@ -271,7 +272,7 @@ if [ "$DEV" = 1 ]; then
 fi
 TSX_USERS=$(sh "$HERE/profile.sh" entries "$PROFILE" user | tr '\n' ' ')
 case "$PROFILE" in console) TSX_HOSTNAME=tsx-console;; *) TSX_HOSTNAME=tsx-kiosk;; esac
-export TSX_SVC_BOOT TSX_SVC_DEFAULT TSX_USERS TSX_HOSTNAME
+export TSX_SVC_SYSINIT TSX_SVC_BOOT TSX_SVC_DEFAULT TSX_USERS TSX_HOSTNAME
 chroot $R /bin/sh -e <<'CH'
 case " $TSX_USERS " in *" kiosk "*)
 	addgroup -S seat 2>/dev/null || true
@@ -290,7 +291,9 @@ esac
 case " $TSX_USERS " in *" tsx-setup "*)
 	getent passwd tsx-setup >/dev/null || adduser -D -H -s /sbin/nologin -g "on-panel setup page" tsx-setup;;
 esac
-for s in devfs dmesg udev udev-trigger udev-settle; do rc-update add $s sysinit; done
+for s in devfs dmesg udev udev-trigger udev-settle $TSX_SVC_SYSINIT; do
+	[ -e /etc/init.d/$s ] && rc-update add $s sysinit || { echo "MISSING sysinit service $s"; exit 1; }
+done
 for s in root localmount modules sysctl hostname bootmisc syslog hwclock seedrng udev-postmount machine-id $TSX_SVC_BOOT; do
 	[ -e /etc/init.d/$s ] && rc-update add $s boot || { echo "MISSING boot service $s"; exit 1; }
 done

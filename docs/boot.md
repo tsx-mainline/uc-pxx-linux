@@ -289,21 +289,48 @@ and `KEY_VOLUMEDOWN` (114), see `rootfs/overlay/etc/tsx/buttons-board.conf`.
 The code reads the key state with `evtest --query` (EVIOCGKEY), because
 `tsx-idled` grabs the input devices.
 
-- `/init` checks the keys early. If both are down, it shows the line "Loader
-  mode: keep holding Vol- and Mute". After 3 s it shows "Loader mode:
+How to use it:
+
+1. Wait until the TSX - LINUX splash shows.
+2. Press Volume down and Mute together, and hold both keys for 3 s.
+3. The unit stops the services and restarts into the loader mode. A host sees
+   the rockusb device (`2207:330c`).
+
+The keys work only in the boot window and in the rescue system. They do
+nothing in daily use, so a long press can never restart the panel.
+
+- `/init` checks the keys once, early. If both are down, it shows the line
+  "Loader mode: keep holding Vol- and Mute". After 3 s it shows "Loader mode:
   restarting" and runs `uc-pxx-reboot loader`. With no key down the check adds
   no delay. If a key is released, the boot goes on.
-- The service `uc-pxx-loader-key` (default runlevel) does the same on the
-  running system: hold both keys for 10 s at any time.
+- The service `uc-pxx-loader-key` (sysinit runlevel) watches from the start of
+  OpenRC until 60 s of uptime. It needs only the input device node, so it
+  starts before udev and does not wait for udev-settle. It needs both keys
+  down for 3 s. At 60 s it ends with exit 0 and logs the end. It has no
+  supervisor, so nothing starts it again. A hold that is in progress at 60 s
+  gets its 3 s. The log is `/run/uc-pxx-loader-key.log` and the kernel log.
+- The rescue system runs the same program with `--rescue` (a respawn line of
+  the rescue `inittab`). It has no end time for the whole session, because the
+  rescue is a recovery state. It needs the same 3 s hold.
 - `uc-pxx-reboot loader` restarts with the argument `loader`. The device
   tree turns it into `BOOT_BL_DOWNLOAD`, and the vendor U-Boot enters the
-  download mode (rockusb). See "Restart into a U-Boot mode".
+  download mode (rockusb). See "Restart into a U-Boot mode". On the running
+  system it does a clean shutdown first. In `/init` and in the rescue it
+  restarts at once.
 - Nothing is written to the eMMC. A power cycle leaves the loader mode.
-- The rescue system has the same program: `uc-pxx-reboot loader`.
 
-The first test needs a unit: hold the keys at the boot and look for the
-rockusb device on the USB-C port of a host. The state of a touch key that is
-held from before the driver probed has not been tested.
+The calibration limit: the touch controller calibrates when its driver probes
+(about 2.4 s after the kernel start). A finger that is on a key at that time
+becomes the zero level, and the key reads "up" until the finger is lifted and
+put down again. So a press that you hold from the power-on is never seen. Press
+the keys after the splash shows. If you held the keys from the power-on, lift
+both and press them again.
+
+Measured on a unit: with both fingers down, both keys read down. After the
+driver was bound again with the fingers still on the keys, both read up.
+
+The first test of the new boot window needs a unit: press the keys after the
+splash and look for the rockusb device on the USB-C port of a host.
 
 ### Restart into a U-Boot mode
 

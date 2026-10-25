@@ -118,7 +118,11 @@ splash
 # U-Boot enters the download mode. Nothing is written to the eMMC. A power
 # cycle leaves the loader mode.
 # With no key down this adds no delay (the device is found at once or after at
-# most 2 s).
+# most 2 s). The controller calibrates when its driver probes, so a key that a
+# finger holds from the power-on reads "up" until it is lifted and pressed
+# again. So this check sees only a hold that began after the probe. For the
+# time after this check, the service uc-pxx-loader-key (sysinit) watches the
+# keys until 60 s of uptime, and the rescue runs it with --rescue (inittab).
 loader_dev() {
 	for n in /sys/class/input/event*/device/name; do
 		[ -r "$n" ] || continue
