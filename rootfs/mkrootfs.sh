@@ -19,8 +19,10 @@
 #               them, for example the private package uc-pxx-board.
 #   AUTHORIZED_KEYS  optional, test builds only
 #   TSX_COMMON  optional: a checkout of tsx-linux-common. Its
-#               splash/mksplash.sh renders the splash images of the UC-P10
-#               screen into /usr/share/tsx/splash (see below)
+#               splash/mksplash.sh renders the sizes of UC_PXX_SPLASH_SIZES
+#               into /usr/share/tsx/splash (see below)
+#   UC_PXX_SPLASH_SIZES  optional: extra splash sizes (WxH, separated by
+#               spaces). Empty (the default): only the images of the package
 #   TSX_BUILD_ID
 #   TSX_DEV_ROOT_HASH  optional crypt(3) hash that becomes the root password
 #               of the image, for our own test builds only. Without it the
@@ -36,8 +38,8 @@
 #               files of the installed common packages, so the image has
 #               the common commits that are not published yet.
 # The script compiles nothing. It copies only the files of profiles/image.list
-# (fstab, inittab, the profile marker) and the splash images of the UC-P10
-# screen. The packages own all other files (docs/rootfs.md "Build the image").
+# (fstab, inittab, the profile marker) and the splash images of
+# UC_PXX_SPLASH_SIZES. The packages own all other files (docs/rootfs.md "Build the image").
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOP=$(cd "$HERE/.." && pwd)
@@ -185,21 +187,21 @@ if [ "$DEV" = 1 ]; then
 	echo "TEST BUILD (UC_PXX_DEV_OVERLAY=1), not from the uc-pxx packages. Do not publish." > $R/etc/tsx/dev-overlay
 fi
 
-# The splash images of the UC-P10 screen (docs/boot.md "The boot splash").
-# The package tsx-splash has images up to 1280x800. tsx-splash draws the
-# largest image that fits: a full "show" after the orientation changed, and
-# the background of the kiosk (tsx-splash png). So add the exact frames of the
-# 1200x1920 LCD: 1920x1200 (landscape) and 1200x1920 (portrait).
-if [ -d $R/usr/share/tsx/splash ]; then
-	if [ -n "${TSX_COMMON:-}" ]; then
-		log "splash images 1920x1200 and 1200x1920 (mksplash.sh of tsx-linux-common)"
-		sh "$TSX_COMMON/splash/mksplash.sh" /build/board-splash 1920x1200 1200x1920 > /dev/null
-		install -m 644 -o 0 -g 0 /build/board-splash/splash-1920x1200.ppm /build/board-splash/splash-1200x1920.ppm \
-			$R/usr/share/tsx/splash/
-		rm -rf /build/board-splash
-	else
-		echo "WARNING: no TSX_COMMON: no 1920x1200 splash, the UC-P10 shows the 1280x800 image"
-	fi
+# The splash images (docs/boot.md "The boot splash"). The package tsx-splash
+# has images up to 1280x800. tsx-splash draws the largest image that fits,
+# centered, on the 1920x1200 screen of the UC-P10: a full "show" after the
+# orientation changed, and the background of the kiosk (tsx-splash png). The
+# kiosk scale is 1.5, so the 1280x800 image has the physical size of the
+# TSW 10" panels. UC_PXX_SPLASH_SIZES adds other sizes (WxH, separated by
+# spaces) with mksplash.sh of tsx-linux-common. It is empty by default.
+if [ -d $R/usr/share/tsx/splash ] && [ -n "${UC_PXX_SPLASH_SIZES:-}" ]; then
+	[ -n "${TSX_COMMON:-}" ] || { echo "ERROR: UC_PXX_SPLASH_SIZES needs TSX_COMMON"; exit 1; }
+	log "splash images $UC_PXX_SPLASH_SIZES (mksplash.sh of tsx-linux-common)"
+	sh "$TSX_COMMON/splash/mksplash.sh" /build/board-splash $UC_PXX_SPLASH_SIZES > /dev/null
+	for sz in $UC_PXX_SPLASH_SIZES; do
+		install -m 644 -o 0 -g 0 /build/board-splash/splash-$sz.ppm $R/usr/share/tsx/splash/
+	done
+	rm -rf /build/board-splash
 fi
 
 log "image files ($PROFILE)"

@@ -181,13 +181,17 @@ panel starts again with a black frame, and the splash follows.
 The panel is 1200x1920 and is mounted turned (`fbcon=rotate:3`). `tsx-splash`
 reads this number from the command line and turns the landscape frame onto
 the panel. It draws the largest image that fits, centered on black. `/init`
-always draws the landscape frame (`-o landscape`). So the initramfs holds two
-images: 1920x1200 for the UC-P10 and the 1280x800 image of the package for
-the UC-P8. The root file system also gets 1920x1200 and 1200x1920 (portrait)
-next to the images of the package. `splash/mksplash.sh` of tsx-linux-common
-renders these sizes at build time, because the package does not have them.
-The build finds the checkout in `TSX_COMMON`, or next to this repository.
-Without it the UC-P10 shows the 1280x800 image, centered on black.
+always draws the landscape frame (`-o landscape`). The only image is the
+1280x800 image of the package, in the initramfs and in the root file system.
+It is centered on the 1920x1200 frame. The scale of the kiosk is 1.5, so the
+picture has the physical size that it has on the TSW 10" panels. A larger
+image (1920x1200 and 1200x1920) was too big on the screen.
+
+The variable `UC_PXX_SPLASH_SIZES` (sizes `WxH` separated by spaces, empty by
+default) is the hook for another size. The build renders each size with
+`splash/mksplash.sh` of tsx-linux-common (`TSX_COMMON`, default
+`../tsx-linux-common`) and puts it next to the image of the package.
+`tsx-splash` then draws the largest image that fits.
 
 `rockchip-drm` gives `fb0` a shadow buffer in system memory. The kernel
 copies the changed lines to the scanout buffer. `tsx-splash` writes one line

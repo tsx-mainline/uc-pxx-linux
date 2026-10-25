@@ -32,10 +32,10 @@ The build does these steps:
 1. Check the tree (`rootfs/check-apk-tree.sh`).
 2. Install the Alpine packages of `rootfs/packages.txt`, the packages of
    `rootfs/packages-tsx.txt` and the profile package `uc-pxx-<profile>`.
-3. Render the splash images of the UC-P10 screen (1920x1200 and 1200x1920)
-   with `splash/mksplash.sh` of tsx-linux-common (`TSX_COMMON`, default
-   `../tsx-linux-common`), if a checkout is there ([boot.md](boot.md) "The
-   boot splash").
+3. Render the splash sizes of `UC_PXX_SPLASH_SIZES` with `splash/mksplash.sh`
+   of tsx-linux-common (`TSX_COMMON`, default `../tsx-linux-common`). The
+   variable is empty by default, so this step does nothing and the image has
+   the images of the package ([boot.md](boot.md) "The boot splash").
 4. Copy the image files of `rootfs/profiles/image.list` (`fstab`, `inittab`
    and the profile marker).
 5. Add the users, enable the services of the profile and lock the root

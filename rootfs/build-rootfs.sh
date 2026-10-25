@@ -60,12 +60,12 @@
 #               package uc-pxx-board. rootfs/check-apk-tree.sh stops the build
 #               when it does not (docs/rootfs.md "Build the image").
 #   TSX_COMMON  a checkout of tsx-linux-common (default: ../tsx-linux-common
-#               next to this repository, if it has splash/mksplash.sh). Its
-#               mksplash.sh renders the splash images of the UC-P10 screen
-#               (1920x1200, and 1200x1920 in the rootfs), which the package
-#               tsx-splash does not have. It becomes the read-only mount
-#               /common in the container. Without it the UC-P10 shows the
-#               1280x800 image of the package, centered on black.
+#               next to this repository, if it has splash/mksplash.sh). It
+#               becomes the read-only mount /common in the container. Its
+#               splash/mksplash.sh renders the sizes of UC_PXX_SPLASH_SIZES.
+#   UC_PXX_SPLASH_SIZES  extra splash sizes (WxH, separated by spaces) for
+#               mksplash.sh. Empty (the default): the splash is the 1280x800
+#               image of the package, centered on the 1920x1200 screen.
 #   TSX_APK_URL  this project's apk repository, see mkrootfs.sh: the panel
 #               lists <url>/<ALPINE>/common and /uc-pxx first. The build never
 #               fetches it.
@@ -107,12 +107,13 @@ fi
 # common_args: mount TSX_COMMON for the splash images (docs/boot.md "The boot
 # splash")
 common_args() {
+	dargs+=(-e UC_PXX_SPLASH_SIZES="${UC_PXX_SPLASH_SIZES:-}")
 	if [ -n "${TSX_COMMON:-}" ]; then
 		[ -f "$TSX_COMMON/splash/mksplash.sh" ] || { echo "TSX_COMMON=$TSX_COMMON has no splash/mksplash.sh"; exit 1; }
 		dargs+=(-v "$(cd "$TSX_COMMON" && pwd):/common:ro" -e TSX_COMMON=/common)
 		echo "splash images: mksplash.sh of $TSX_COMMON ($(git -C "$TSX_COMMON" describe --always --dirty 2>/dev/null || echo 'no git'))"
 	else
-		echo "WARNING: no TSX_COMMON: no 1920x1200 splash, the UC-P10 shows the 1280x800 image"
+		echo "no TSX_COMMON: no extra splash sizes"
 	fi
 }
 need_binfmt() {
