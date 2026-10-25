@@ -167,8 +167,14 @@ framebuffer that does not exist, so no console text reaches the LCD.
 
 The panel is 1200x1920 and is mounted turned (`fbcon=rotate:3`). `tsx-splash`
 reads this number from the command line and turns the landscape frame onto
-the panel. It draws the largest image that fits, centered on black. The
-initramfs holds the 1280x800 and 800x1280 images of the package.
+the panel. It draws the largest image that fits, centered on black. `/init`
+always draws the landscape frame (`-o landscape`). So the initramfs holds two
+images: 1920x1200 for the UC-P10 and the 1280x800 image of the package for
+the UC-P8. The root file system also gets 1920x1200 and 1200x1920 (portrait)
+next to the images of the package. `splash/mksplash.sh` of tsx-linux-common
+renders these sizes at build time, because the package does not have them.
+The build finds the checkout in `TSX_COMMON`, or next to this repository.
+Without it the UC-P10 shows the 1280x800 image, centered on black.
 
 The rescue system and the console profile (`/etc/tsx/profile` is `console`,
 with a login on `tty1`) get the text console back first: `tsx-splash

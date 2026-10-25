@@ -32,12 +32,16 @@ The build does these steps:
 1. Check the tree (`rootfs/check-apk-tree.sh`).
 2. Install the Alpine packages of `rootfs/packages.txt`, the packages of
    `rootfs/packages-tsx.txt` and the profile package `uc-pxx-<profile>`.
-3. Copy the image files of `rootfs/profiles/image.list` (`fstab`, `inittab`
+3. Render the splash images of the UC-P10 screen (1920x1200 and 1200x1920)
+   with `splash/mksplash.sh` of tsx-linux-common (`TSX_COMMON`, default
+   `../tsx-linux-common`), if a checkout is there ([boot.md](boot.md) "The
+   boot splash").
+4. Copy the image files of `rootfs/profiles/image.list` (`fstab`, `inittab`
    and the profile marker).
-4. Add the users, enable the services of the profile and lock the root
+5. Add the users, enable the services of the profile and lock the root
    password.
-5. Check the kernel package against the pin (`rootfs/check-kernel-pins.sh`).
-6. Write the tarball and the ext4 image (label `tsxroot`).
+6. Check the kernel package against the pin (`rootfs/check-kernel-pins.sh`).
+7. Write the tarball and the ext4 image (label `tsxroot`).
 
 `rootfs/out/rootfs.ext4` must be at most 1700 MiB. `system_a` has 1792 MiB.
 The initramfs grows the file system to fill the partition at the first boot.

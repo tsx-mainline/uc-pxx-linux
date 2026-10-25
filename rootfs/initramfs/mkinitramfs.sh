@@ -20,6 +20,10 @@
 #                    (tsx-splash of tsx-linux-common) comes from its
 #                    <ALPINE>/common, checked with the key of the image.
 #                    Without it the initramfs has no boot splash
+#   TSX_COMMON       optional: a checkout of tsx-linux-common. Its
+#                    splash/mksplash.sh renders the 1920x1200 image of the
+#                    UC-P10, which the package does not have. Without it the
+#                    UC-P10 shows the 1280x800 image, centered on black
 #   UIDGID           owner of OUT
 # The rescue has no root password. The shell on the serial console needs no
 # login.
@@ -44,9 +48,10 @@ else
 	echo "WARNING: no RTL8363_INIT: the rescue has no wired network"
 fi
 # The boot splash (docs/boot.md "The boot splash"): the program and the
-# images of the package tsx-splash. The program draws the largest image that
-# fits, so only the 1280x800 and 800x1280 images go in (the screen is 1920x1200
-# landscape or 1200x1920 portrait). The fonts draw the status line.
+# images of the package tsx-splash. /init always draws the landscape frame:
+# 1920x1200 on the UC-P10 and 1280x800 on the UC-P8. So only these two sizes
+# go in. The package has the 1280x800 image. mksplash.sh of tsx-linux-common
+# renders the 1920x1200 one. The fonts draw the status line.
 if [ -n "${TSX_APK_LOCAL:-}" ]; then
 	A=${ALPINE:-v3.24}
 	cp /w/rootfs/overlay/etc/apk/keys/*.rsa.pub /etc/apk/keys/
@@ -56,11 +61,20 @@ if [ -n "${TSX_APK_LOCAL:-}" ]; then
 	apk add --root $S --initdb --no-cache -q --repositories-file /tmp/splash-repos --keys-dir /etc/apk/keys tsx-splash
 	install -D -m 755 $S/usr/local/bin/tsx-splash $R/usr/sbin/tsx-splash
 	mkdir -p $R/usr/share/tsx/splash
-	for f in font-16.psf font-24.psf splash-1280x800.ppm splash-800x1280.ppm; do
+	for f in font-16.psf font-24.psf splash-1280x800.ppm; do
 		cp $S/usr/share/tsx/splash/$f $R/usr/share/tsx/splash/$f
 	done
 	echo "boot splash: $(apk info --root $S -v tsx-splash 2>/dev/null | head -n 1)"
 	rm -rf $S
+	if [ -n "${TSX_COMMON:-}" ]; then
+		[ -r "$TSX_COMMON/splash/mksplash.sh" ] || { echo "mkinitramfs.sh: TSX_COMMON=$TSX_COMMON has no splash/mksplash.sh"; exit 1; }
+		sh "$TSX_COMMON/splash/mksplash.sh" /tmp/board-splash 1920x1200 > /dev/null
+		cp /tmp/board-splash/splash-1920x1200.ppm $R/usr/share/tsx/splash/
+		echo "boot splash: splash-1920x1200.ppm from mksplash.sh ($(sha256sum /tmp/board-splash/splash-1920x1200.ppm | cut -c1-16))"
+		rm -rf /tmp/board-splash
+	else
+		echo "WARNING: no TSX_COMMON: no 1920x1200 splash, the UC-P10 shows the 1280x800 image"
+	fi
 else
 	echo "WARNING: no TSX_APK_LOCAL: the initramfs has no boot splash"
 fi

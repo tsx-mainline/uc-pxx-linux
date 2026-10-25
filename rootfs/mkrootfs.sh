@@ -18,6 +18,9 @@
 #               check-apk-tree.sh stops the build when the tree lacks one of
 #               them, for example the private package uc-pxx-board.
 #   AUTHORIZED_KEYS  optional, test builds only
+#   TSX_COMMON  optional: a checkout of tsx-linux-common. Its
+#               splash/mksplash.sh renders the splash images of the UC-P10
+#               screen into /usr/share/tsx/splash (see below)
 #   TSX_BUILD_ID
 #   TSX_DEV_ROOT_HASH  optional crypt(3) hash that becomes the root password
 #               of the image, for our own test builds only. Without it the
@@ -29,8 +32,8 @@
 #               (docs/rootfs.md "Test build without the uc-pxx packages"). It
 #               needs UC_PXX_BOOTCTL and RTL8363_INIT (build-rootfs.sh).
 # The script compiles nothing. It copies only the files of profiles/image.list
-# (fstab, inittab, the profile marker). The packages own all other files
-# (docs/rootfs.md "Build the image").
+# (fstab, inittab, the profile marker) and the splash images of the UC-P10
+# screen. The packages own all other files (docs/rootfs.md "Build the image").
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOP=$(cd "$HERE/.." && pwd)
@@ -137,6 +140,23 @@ if [ "$DEV" = 1 ]; then
 	[ "$(sha256sum $R/usr/sbin/uc-pxx-bootctl | cut -d' ' -f1)" = "$BOOTCTL_SHA256" ] || { echo "ERROR: uc-pxx-bootctl changed in the copy"; exit 1; }
 	mkdir -p $R/etc/tsx
 	echo "TEST BUILD (UC_PXX_DEV_OVERLAY=1), not from the uc-pxx packages. Do not publish." > $R/etc/tsx/dev-overlay
+fi
+
+# The splash images of the UC-P10 screen (docs/boot.md "The boot splash").
+# The package tsx-splash has images up to 1280x800. tsx-splash draws the
+# largest image that fits: a full "show" after the orientation changed, and
+# the background of the kiosk (tsx-splash png). So add the exact frames of the
+# 1200x1920 LCD: 1920x1200 (landscape) and 1200x1920 (portrait).
+if [ -d $R/usr/share/tsx/splash ]; then
+	if [ -n "${TSX_COMMON:-}" ]; then
+		log "splash images 1920x1200 and 1200x1920 (mksplash.sh of tsx-linux-common)"
+		sh "$TSX_COMMON/splash/mksplash.sh" /build/board-splash 1920x1200 1200x1920 > /dev/null
+		install -m 644 -o 0 -g 0 /build/board-splash/splash-1920x1200.ppm /build/board-splash/splash-1200x1920.ppm \
+			$R/usr/share/tsx/splash/
+		rm -rf /build/board-splash
+	else
+		echo "WARNING: no TSX_COMMON: no 1920x1200 splash, the UC-P10 shows the 1280x800 image"
+	fi
 fi
 
 log "image files ($PROFILE)"

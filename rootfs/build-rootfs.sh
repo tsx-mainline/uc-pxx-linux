@@ -55,6 +55,13 @@
 #               it. Nothing is compiled. The tree must hold the private
 #               package uc-pxx-board. rootfs/check-apk-tree.sh stops the build
 #               when it does not (docs/rootfs.md "Build the image").
+#   TSX_COMMON  a checkout of tsx-linux-common (default: ../tsx-linux-common
+#               next to this repository, if it has splash/mksplash.sh). Its
+#               mksplash.sh renders the splash images of the UC-P10 screen
+#               (1920x1200, and 1200x1920 in the rootfs), which the package
+#               tsx-splash does not have. It becomes the read-only mount
+#               /common in the container. Without it the UC-P10 shows the
+#               1280x800 image of the package, centered on black.
 #   TSX_APK_URL  this project's apk repository, see mkrootfs.sh: the panel
 #               lists <url>/<ALPINE>/common and /uc-pxx first. The build never
 #               fetches it.
@@ -90,6 +97,20 @@ MODULES=$HERE/modules
 KVER=${KVER:-$(ls "$MODULES/lib/modules" 2>/dev/null | tr '\n' ' ' || true)}
 AUTHORIZED_KEYS=${AUTHORIZED_KEYS:-$HERE/authorized_keys}
 UIDGID="$(id -u):$(id -g)"
+if [ -z "${TSX_COMMON:-}" ] && [ -f "$REPO/../tsx-linux-common/splash/mksplash.sh" ]; then
+	TSX_COMMON=$REPO/../tsx-linux-common
+fi
+# common_args: mount TSX_COMMON for the splash images (docs/boot.md "The boot
+# splash")
+common_args() {
+	if [ -n "${TSX_COMMON:-}" ]; then
+		[ -f "$TSX_COMMON/splash/mksplash.sh" ] || { echo "TSX_COMMON=$TSX_COMMON has no splash/mksplash.sh"; exit 1; }
+		dargs+=(-v "$(cd "$TSX_COMMON" && pwd):/common:ro" -e TSX_COMMON=/common)
+		echo "splash images: mksplash.sh of $TSX_COMMON ($(git -C "$TSX_COMMON" describe --always --dirty 2>/dev/null || echo 'no git'))"
+	else
+		echo "WARNING: no TSX_COMMON: no 1920x1200 splash, the UC-P10 shows the 1280x800 image"
+	fi
+}
 need_binfmt() {
 	[ -e "${BINFMT_DIR:-/proc/sys/fs/binfmt_misc}/qemu-aarch64" ] || { echo "need qemu-aarch64 binfmt (qemu-user-static)"; exit 1; }
 	ensure_image
@@ -201,6 +222,7 @@ initramfs() {
 	if [ -n "${TSX_APK_LOCAL:-}" ]; then
 		need_apk_tree
 		dargs+=(-v "$(cd "$TSX_APK_LOCAL" && pwd):/aports:ro" -e TSX_APK_LOCAL=/aports)
+		common_args
 	else
 		echo "WARNING: no TSX_APK_LOCAL: the initramfs has no boot splash"
 	fi
@@ -223,6 +245,7 @@ rootfs() {
 	if [ -s "$AUTHORIZED_KEYS" ]; then dargs+=(-v "$(readlink -f "$AUTHORIZED_KEYS"):/in/authorized_keys:ro" -e AUTHORIZED_KEYS=/in/authorized_keys); fi
 	[ -d "$MODULES" ] && dargs+=(-v "$MODULES:/modules:ro")
 	dargs+=(-v "$(cd "$TSX_APK_LOCAL" && pwd):/aports:ro" -e TSX_APK_LOCAL=/aports)
+	common_args
 	if [ "${UC_PXX_DEV_OVERLAY:-}" = 1 ]; then
 		echo "WARNING: UC_PXX_DEV_OVERLAY=1: TEST BUILD without the uc-pxx packages. Never publish this image."
 		[ -n "${UC_PXX_BOOTCTL:-}" ] || { echo "UC_PXX_DEV_OVERLAY=1 needs UC_PXX_BOOTCTL"; exit 1; }
