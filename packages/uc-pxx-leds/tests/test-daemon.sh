@@ -2,9 +2,10 @@
 # Host test for the daemon uc-pxx-leds. It uses a made-up /sys/class/leds, a
 # stub for uc-pxx-bootctl and real sockets. It checks:
 #   - the parser: only the fixed command forms run, every other line is refused
-#   - the start state: indicators off, a slow blue blink until the boot is
-#     good, then green for BOOT_OK_HOLD_S, then off; commands for the status
-#     LED are refused before the boot is good
+#   - the start state: indicators off, a slow blue blink until the system is
+#     ready, then green for BOOT_OK_HOLD_S, then off; commands for the status
+#     LED are refused before the boot is good (the A/B mark)
+#   - READY: the sources kiosk, openrc, bootctl and auto, the timeout fallback
 #   - the indicators and the status LED: colors, kernel triggers, software patterns
 #   - the red LED: the latch, the rule that red is never written when it is
 #     not ours, and no write at all while the boot is not good
@@ -30,6 +31,8 @@ python3 -I -B -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$PROG" &
 busybox sh -n "$INIT" && ok "the init script passes busybox sh -n" || bad "the init script: busybox sh -n"
 head -n 1 "$INIT" | grep -qx '#!/sbin/openrc-run' && ok "the init script is an OpenRC script" || bad "no openrc-run line"
 grep -qx 'PERSIST=no' "$CONF" && ok "the shipped config has PERSIST=no" || bad "the shipped config does not have PERSIST=no"
+grep -qx 'READY_SOURCE=auto' "$CONF" && ok "the shipped config has READY_SOURCE=auto" || bad "the shipped config does not have READY_SOURCE=auto"
+grep -qx 'READY_TIMEOUT_S=180' "$CONF" && ok "the shipped config has READY_TIMEOUT_S=180" || bad "the shipped config does not have READY_TIMEOUT_S=180"
 grep -qx 'BOOT_OK_HOLD_S=10' "$CONF" && ok "the shipped config has BOOT_OK_HOLD_S=10" || bad "the shipped config does not have BOOT_OK_HOLD_S=10"
 grep -q 'uc-pxx-bootctl' "$PROG" && ok "the daemon names uc-pxx-bootctl" || bad "no bootctl"
 grep -Eq 'bootctl.*(mark-successful|arm|--file)|"(mark-successful|arm-trying)"' "$PROG" && bad "the daemon may call a bootctl command that writes" || ok "the daemon calls only 'bootctl status'"
@@ -45,7 +48,7 @@ s=$(cat "$D/bootctl.succ" 2>/dev/null)
 exit "$(cat "$D/bootctl.rc" 2>/dev/null || echo 0)"
 S
 chmod +x "$T/bootctl"
-ENVV="UC_PXX_LEDS=$T/leds UC_PXX_LEDS_SOCK=$T/run/sock UC_PXX_LEDS_STATE=$T/state UC_PXX_LEDS_CONF=$T/conf UC_PXX_LEDS_SAVE=$T/saved UC_PXX_BOOTCTL=$T/bootctl UC_PXX_SLOT_MARK=$T/mark TSX_RUN_DIR=$T/run UC_PXX_LEDS_GROUPS=nosuchgroup"
+ENVV="UC_PXX_LEDS=$T/leds UC_PXX_LEDS_SOCK=$T/run/sock UC_PXX_LEDS_STATE=$T/state UC_PXX_LEDS_CONF=$T/conf UC_PXX_LEDS_SAVE=$T/saved UC_PXX_BOOTCTL=$T/bootctl UC_PXX_SLOT_MARK=$T/mark TSX_RUN_DIR=$T/run UC_PXX_LEDS_GROUPS=nosuchgroup UC_PXX_READY_SOURCE=bootctl"
 
 echo "== the module, with made-up LEDs =="
 env -i PATH="$PATH" PYTHONDONTWRITEBYTECODE=1 $ENVV python3 -I -B "$HERE/tests/check_daemon.py" "$PROG" "$T"
@@ -115,7 +118,7 @@ rm -f "$T/mark"
 # red lit by another program
 send 'status auto\n' > /dev/null; sleep 0.8
 echo 1 > "$T/leds/red/brightness"; sleep 0.8
-eq "$(sed -n 2p "$T/state")" "red latched" "red lit by another program: latched in the state file"
+eq "$(sed -n 3p "$T/state")" "red latched" "red lit by another program: latched in the state file"
 # reload and signals
 printf 'PERSIST=yes\n' > "$T/conf"; kill -HUP $BG; sleep 0.8
 eq "$(sed -n 's/^persist //p' "$T/state")" "yes" "SIGHUP reads the config again"

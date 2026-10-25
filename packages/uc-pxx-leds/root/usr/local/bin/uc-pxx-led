@@ -68,6 +68,7 @@ def show():
         if len(parts) == 2:
             rows[parts[0]] = parts[1]
     print("boot      %s" % rows.get("boot", "?"))
+    print("ready     %s" % rows.get("ready", "?"))
     for name in INDICATORS:
         print("%-9s %s" % (name, rows.get(name, "?")))
     print("status    %s (asked: %s)" % (rows.get("shown", "?"), rows.get("status", "?")))

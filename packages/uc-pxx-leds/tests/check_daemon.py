@@ -347,12 +347,135 @@ check("after the hold a latched red stays on", (led("red"), L.red_latched, state
 put(t + "/conf", "BOOT_OK_HOLD_S=0\n"); L.read_conf(); at(L, 1100.0)
 check("a reload reads BOOT_OK_HOLD_S again", (L.hold, led("green")), (0, 1))
 
+# ---- READY: the end of the boot display
+m.KIOSK_READY = t + "/kiosk.ready"
+m.RUNLEVELS = t + "/runlevels"
+m.RC_STATUS = t + "/rc-status"
+m.OPENRC_STARTED = t + "/started-local"
+m.READY_POLL = 0                       # look at each step
+
+
+def rc(level, services=""):
+    """A stub of rc-status: -r prints LEVEL, the list prints SERVICES. level None: no program."""
+    for f in (m.RC_STATUS, t + "/rc.level", t + "/rc.list"):
+        if os.path.exists(f):
+            os.unlink(f)
+    if level is None:
+        return
+    put(t + "/rc.level", level + "\n")
+    put(t + "/rc.list", services)
+    put(m.RC_STATUS, '#!/bin/sh\nD=$(dirname "$0")\ncase "$*" in *-r*) cat "$D/rc.level";; *) cat "$D/rc.list";; esac\n')
+    os.chmod(m.RC_STATUS, 0o755)
+
+
+def kiosk(on):
+    if on:
+        put(m.KIOSK_READY, "revealed page painted uptime 20.0\n")
+    elif os.path.exists(m.KIOSK_READY):
+        os.unlink(m.KIOSK_READY)
+
+
+def shown(leds):
+    return state(leds)["shown"]
+
+
+kiosk(False)
+L = fresh(conf="READY_SOURCE=kiosk\n")           # slot A is already marked: the A/B mark does not end the blue
+check("kiosk source: the A/B mark alone keeps the blue blink", (L.boot, L.ready, shown(L), state(L)["ready"]),
+      ("ok", "wait", "blue blink boot", "wait"))
+check("blue blink: the trigger is timer and green is off", (trig("blue"), led("green")), ("timer", 0))
+check("a status command is accepted by the A/B mark but not shown before READY",
+      (L.handle("status red"), shown(L)), ("ok", "blue blink boot"))
+L.handle("status auto")
+kiosk(True); at(L, 1001.0)
+check("kiosk.ready exists: ready", (L.ready, state(L)["ready"], shown(L), led("green"), trig("blue")), ("yes", "yes", "green solid", 1, "none"))
+check("the step wakes up at the end of the green hold", round(at(L, 1001.0 + m.HOLD_DEFAULT - 0.2), 3), 0.2)
+at(L, 1001.0 + m.HOLD_DEFAULT)
+check("after the hold: off", (shown(L), led("green")), ("off solid", 0))
+kiosk(False); at(L, 1100.0)
+check("READY is latched: a kiosk restart does not bring the blue back", (L.ready, shown(L)), ("yes", "off solid"))
+check("a status command works after READY", (L.handle("status cyan"), shown(L)), ("ok", "cyan solid"))
+mark(True); at(L, 1101.0)
+check("locked after READY: the slow blue blink again", (L.boot, shown(L), L.handle("status red")), ("locked", "blue blink boot", "err boot-locked"))
+mark(False)
+
+L = fresh(ok=False, conf="READY_SOURCE=kiosk\n")  # READY before the A/B mark
+kiosk(True); at(L, 1001.0)
+check("READY before the A/B mark: green solid", (L.boot, L.ready, shown(L), led("green")), ("wait", "yes", "green solid", 1))
+check("the status LED stays locked until the A/B mark", (L.handle("status red"), L.handle("status auto")), ("err boot-wait", "ok"))
+check("red is not written while the boot is not good", (led("red"), trig("red")), (0, TRIG.strip()))
+at(L, 1001.0 + m.HOLD_DEFAULT)
+check("the hold ends: off, the boot is still wait", (shown(L), L.boot), ("off solid", "wait"))
+bootctl(1); L.boot_due = 0; at(L, 1020.0)
+check("then the A/B mark: commands work", (L.boot, L.handle("status red"), shown(L)), ("ok", "ok", "red solid"))
+kiosk(False)
+
+# the timeout: go by the A/B mark
+L = fresh(conf="READY_SOURCE=kiosk\nREADY_TIMEOUT_S=30\n")
+check("READY_TIMEOUT_S is read", L.ready_timeout, 30)
+at(L, 1029.0)
+check("before the timeout: wait", (L.ready, shown(L)), ("wait", "blue blink boot"))
+at(L, 1030.0)
+check("timeout and the A/B mark: fallback, green", (L.ready, state(L)["ready"], shown(L)), ("fallback", "fallback", "green solid"))
+at(L, 1030.0 + m.HOLD_DEFAULT)
+check("fallback: the hold, then off", shown(L), "off solid")
+L = fresh(ok=False, conf="READY_SOURCE=kiosk\nREADY_TIMEOUT_S=30\n")
+at(L, 1040.0)
+check("timeout without the A/B mark: still blue", (L.ready, shown(L)), ("wait", "blue blink boot"))
+bootctl(1); L.boot_due = 0; at(L, 1041.0)
+check("then the A/B mark: fallback", (L.ready, shown(L)), ("fallback", "green solid"))
+
+# openrc
+rc("boot")
+L = fresh(conf="READY_SOURCE=openrc\n")
+check("openrc: runlevel boot is not ready", (L.ready, shown(L)), ("wait", "blue blink boot"))
+rc("default", " sshd                                [  started  ]\n kiosk                               [  starting ]\n")
+at(L, 1001.0)
+check("openrc: default runlevel with a starting service is not ready", L.ready, "wait")
+rc("default", " sshd                                [  started  ]\n kiosk                               [  started  ]\n")
+at(L, 1002.0)
+check("openrc: default runlevel, nothing starting: ready", (L.ready, shown(L)), ("yes", "green solid"))
+rc(None); put(m.OPENRC_STARTED, "")
+L = fresh(conf="READY_SOURCE=openrc\n")
+check("openrc without rc-status: /run/openrc/started/local", (L.ready, shown(L)), ("yes", "green solid"))
+os.unlink(m.OPENRC_STARTED)
+L = fresh(conf="READY_SOURCE=openrc\n")
+check("openrc without rc-status and the file: wait", L.ready, "wait")
+
+# auto picks by the runlevel
+shutil.rmtree(m.RUNLEVELS, ignore_errors=True)
+os.makedirs(m.RUNLEVELS + "/default")
+L = fresh(conf="READY_SOURCE=auto\n")
+check("auto, no kiosk in the default runlevel: openrc", L.resolve_source(), "openrc")
+os.symlink("/etc/init.d/kiosk", m.RUNLEVELS + "/default/kiosk")
+L = fresh(conf="READY_SOURCE=auto\n")
+check("auto, kiosk in the default runlevel: kiosk", (L.source, L.resolve_source()), ("auto", "kiosk"))
+at(L, 1001.0)
+check("and the blue blink goes on without kiosk.ready", (L.ready, shown(L)), ("wait", "blue blink boot"))
+kiosk(True); at(L, 1002.0)
+check("auto with kiosk: kiosk.ready ends the blue blink", (L.ready, shown(L)), ("yes", "green solid"))
+kiosk(False)
+shutil.rmtree(m.RUNLEVELS, ignore_errors=True)
+
+# bootctl: the A/B mark, no latch
+L = fresh(ok=False, conf="READY_SOURCE=bootctl\n")
+check("bootctl source: wait until the A/B mark", (L.ready, shown(L)), ("wait", "blue blink boot"))
+bootctl(1); L.boot_due = 0; at(L, 1011.0)
+check("bootctl source: the mark gives READY and the green time", (L.ready, shown(L)), ("yes", "green solid"))
+# bad values
+L = fresh(conf="READY_SOURCE=soon\nREADY_TIMEOUT_S=0\n")
+check("a bad READY_SOURCE and READY_TIMEOUT_S: the defaults", (L.source, L.ready_timeout), (m.READY_SOURCE_DEFAULT, m.READY_TIMEOUT_DEFAULT))
+L = fresh(conf='READY_SOURCE="kiosk"\n')
+check("quotes in READY_SOURCE", L.source, "kiosk")
+put(t + "/conf", "READY_SOURCE=openrc\n"); L.read_conf()
+check("a reload reads READY_SOURCE again", L.source, "openrc")
+
 # ---- the state file and get
 L = fresh()
 check("get returns the state text", L.handle("get"), L.state_text().rstrip("\n"))
 check("the state file is written", get(t + "/state"), L.state_text().strip())
 check("the keys of the state file", [l.split()[0] for l in L.state_text().splitlines()],
-      ["boot", "red", "teams", "headset", "speaker", "mic", "status", "shown", "persist"])
+      ["boot", "ready", "red", "teams", "headset", "speaker", "mic", "status", "shown", "persist"])
 check("the mode of the state file", oct(os.stat(t + "/state").st_mode & 0o777), "0o644")
 
 print("%d failed" % fails)

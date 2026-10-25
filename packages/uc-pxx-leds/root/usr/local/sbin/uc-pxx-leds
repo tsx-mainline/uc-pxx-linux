@@ -14,16 +14,33 @@ fast). All are off at boot.
 
 Status LED: a color (off, red, green, blue, yellow, cyan, magenta, white) and a
 mode (solid, blink, heartbeat). The daemon owns it until the boot is good:
-a slow blue blink (500 ms on, 1500 ms off) while slot A is not marked
-successful, then solid green for BOOT_OK_HOLD_S seconds (default 10), then
-off. A command can change it only after the boot is good. "status auto" gives
-it back to this boot display.
+a slow blue blink (500 ms on, 1500 ms off) until the system is READY, then
+solid green for BOOT_OK_HOLD_S seconds (default 10), then off. A command can
+change it only after the boot is good (slot A marked successful). "status
+auto" gives it back to this boot display.
+
+READY is a separate state from the boot state. It means that the system is
+up. READY_SOURCE in /etc/tsx/uc-pxx-leds.conf picks how the daemon decides:
+
+  kiosk     /run/tsx/kiosk.ready exists (the page has painted)
+  openrc    OpenRC has finished the default runlevel (`rc-status -r` says
+            default and no service is starting; else /run/openrc/started/local)
+  bootctl   the boot state is "ok" (the A/B mark, the old behavior)
+  auto      (default) kiosk if the service kiosk is in the default runlevel,
+            else openrc
+
+READY is latched: once it is true, it stays true while the daemon runs. If it
+does not come within READY_TIMEOUT_S (default 180) after the daemon start,
+the daemon goes by the A/B mark, as bootctl does ("ready fallback" in the
+state file). A kiosk restart later does not bring back the blue blink.
 
 The boot state comes from `uc-pxx-bootctl status`, which only reads the A/B
 sector. The state is "ok" when slot A is marked successful and the marker
 /run/uc-pxx-slot-a-changed does not exist. The marker means that a script
 changed or armed slot A in this boot. The state is "locked" then, and the
-status LED shows the slow blue blink again.
+status LED shows the slow blue blink again, also when READY. The commands for
+the status LED and the red LED rules depend on the boot state only, not on
+READY.
 
 Red LED safety latch. The A/B scripts write /sys/class/leds/red/brightness
 when the A/B state is unknown. The daemon never hides that:
@@ -34,7 +51,8 @@ when the A/B state is unknown. The daemon never hides that:
   - The daemon never puts a kernel trigger on the red LED. It makes a red
     pattern (blink, heartbeat) itself with plain writes, so that every change
     of the LED by another program shows.
-  - While the boot is not good, the daemon does not write red at all.
+  - While the boot is not good (state wait or locked), the daemon does not
+    write red at all, also when READY.
 
 Control: a stream socket (SOCK_STREAM) at /run/tsx/uc-pxx-leds.sock, group
 kiosk, mode 0660. A client sends one line and reads one answer line ("ok" or
@@ -61,7 +79,10 @@ good (default 10). 0 keeps the green on.
 Environment overrides for tests: UC_PXX_LEDS (the LED class folder),
 UC_PXX_LEDS_SOCK, UC_PXX_LEDS_STATE, UC_PXX_LEDS_CONF, UC_PXX_LEDS_SAVE,
 UC_PXX_BOOTCTL, UC_PXX_SLOT_MARK, UC_PXX_LEDS_GROUPS, UC_PXX_BOOT_POLL
-(seconds, default 10), UC_PXX_BOOT_POLL_OK (default 60) and UC_PXX_LEDS_LOOPS.
+(seconds, default 10), UC_PXX_BOOT_POLL_OK (default 60), UC_PXX_LEDS_LOOPS,
+UC_PXX_KIOSK_READY, UC_PXX_RUNLEVELS, UC_PXX_RC_STATUS, UC_PXX_OPENRC_STARTED,
+UC_PXX_READY_POLL (seconds, default 2) and UC_PXX_READY_SOURCE (the default
+of READY_SOURCE when the config file has no such key).
 """
 
 import grp
@@ -85,6 +106,11 @@ SLOT_MARK = os.environ.get("UC_PXX_SLOT_MARK", "/run/uc-pxx-slot-a-changed")
 GROUPS = os.environ.get("UC_PXX_LEDS_GROUPS", "kiosk tsx-panel-app").split()
 POLL_WAIT = float(os.environ.get("UC_PXX_BOOT_POLL", "10"))
 POLL_OK = float(os.environ.get("UC_PXX_BOOT_POLL_OK", "60"))
+KIOSK_READY = os.environ.get("UC_PXX_KIOSK_READY", os.path.join(RUN, "kiosk.ready"))
+RUNLEVELS = os.environ.get("UC_PXX_RUNLEVELS", "/etc/runlevels")
+RC_STATUS = os.environ.get("UC_PXX_RC_STATUS", "rc-status")
+OPENRC_STARTED = os.environ.get("UC_PXX_OPENRC_STARTED", "/run/openrc/started/local")
+READY_POLL = float(os.environ.get("UC_PXX_READY_POLL", "2"))
 
 INDICATORS = {"teams": "teams_white", "headset": "mute_headset", "speaker": "mute_speaker", "mic": "mute_red"}
 COLORS = {"off": (0, 0, 0), "red": (1, 0, 0), "green": (0, 1, 0), "blue": (0, 0, 1),
@@ -96,6 +122,9 @@ SPEEDS = ("slow", "fast")                      # the speeds of a command
 TIMING = {"slow": (0.5, 0.5), "fast": (0.125, 0.125), "boot": (0.5, 1.5)}
 BOOT_SHOW = ("blue", "blink", "boot")         # the status LED until the boot is good
 HOLD_DEFAULT = 10
+READY_SOURCES = ("auto", "kiosk", "openrc", "bootctl")
+READY_SOURCE_DEFAULT = os.environ.get("UC_PXX_READY_SOURCE", "auto")
+READY_TIMEOUT_DEFAULT = 180
 # One cycle of a software pattern: (seconds, on)
 HEARTBEAT = ((0.07, 1), (0.13, 0), (0.07, 1), (0.73, 0))
 MAX_LINE = 64
@@ -229,6 +258,12 @@ class Leds:
         self.boot_due = 0.0
         self.hold = HOLD_DEFAULT              # seconds of green after the boot is good
         self.ok_since = None                  # when the boot state became ok
+        self.source = READY_SOURCE_DEFAULT    # READY_SOURCE of the config
+        self.ready_timeout = READY_TIMEOUT_DEFAULT
+        self.ready = "wait"                   # wait, yes or fallback (timeout, the A/B mark)
+        self.ready_since = None               # when READY became true
+        self.ready_due = 0.0                  # when to look for READY again
+        self.ready_start = None               # the time of the first step
         self.now = 0.0                        # the time of the last step
         # LED -> the kernel triggers it offers, read now, before the first write
         self.triggers = {}
@@ -243,13 +278,17 @@ class Leds:
 
     # ---- settings
     def read_conf(self):
-        value, hold = "no", None
+        value, hold, source, timeout = "no", None, None, None
         for line in (read_text(CONF) or "").splitlines():
             line = line.strip()
             if line.startswith("PERSIST="):
                 value = line.split("=", 1)[1].strip().strip("\"'")
             elif line.startswith("BOOT_OK_HOLD_S="):
                 hold = line.split("=", 1)[1].strip().strip("\"'")
+            elif line.startswith("READY_SOURCE="):
+                source = line.split("=", 1)[1].strip().strip("\"'")
+            elif line.startswith("READY_TIMEOUT_S="):
+                timeout = line.split("=", 1)[1].strip().strip("\"'")
         self.persist = value in ("yes", "on", "1", "true")
         self.hold = HOLD_DEFAULT
         if hold:
@@ -257,6 +296,18 @@ class Leds:
                 self.hold = int(hold)
             else:
                 log("BOOT_OK_HOLD_S=%s is not a number of seconds: %d is used" % (clean(hold), HOLD_DEFAULT))
+        self.source = READY_SOURCE_DEFAULT if READY_SOURCE_DEFAULT in READY_SOURCES else "auto"
+        if source:
+            if source in READY_SOURCES:
+                self.source = source
+            else:
+                log("READY_SOURCE=%s is not auto, kiosk, openrc or bootctl: %s is used" % (clean(source), self.source))
+        self.ready_timeout = READY_TIMEOUT_DEFAULT
+        if timeout:
+            if timeout.isdigit() and len(timeout) <= 6 and int(timeout) > 0:
+                self.ready_timeout = int(timeout)
+            else:
+                log("READY_TIMEOUT_S=%s is not a number of seconds: %d is used" % (clean(timeout), READY_TIMEOUT_DEFAULT))
 
     def save(self):
         if not self.persist:
@@ -301,6 +352,58 @@ class Leds:
             self.boot = new
             self.ok_since = now if new == "ok" else None
 
+    # ---- READY: the system is up (separate from the A/B boot state)
+    def resolve_source(self):
+        """The source that is in use: kiosk, openrc or bootctl."""
+        if self.source != "auto":
+            return self.source
+        return "kiosk" if os.path.lexists(os.path.join(RUNLEVELS, "default", "kiosk")) else "openrc"
+
+    def openrc_done(self):
+        """OpenRC has finished the default runlevel."""
+        try:
+            res = subprocess.run([RC_STATUS, "--nocolor", "-r"], check=False, timeout=5, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            level = res.stdout.decode("ascii", "replace").strip()
+            if res.returncode == 0 and level:
+                if level != "default":
+                    return False
+                res = subprocess.run([RC_STATUS, "--nocolor", "default"], check=False, timeout=5,
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                text = res.stdout.decode("ascii", "replace")
+                return res.returncode == 0 and not re.search(r"\[\s*starting\s*\]", text)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return os.path.exists(OPENRC_STARTED)      # no rc-status: the last service of the runlevel
+
+    def update_ready(self, now):
+        """Set self.ready (wait, yes or fallback). With the sources kiosk and
+        openrc it is latched: once it is not "wait", it stays."""
+        if self.ready_start is None:
+            self.ready_start = now
+        src = self.resolve_source()
+        if src == "bootctl":
+            # The A/B mark, as before READY existed: no latch, and the green
+            # time starts each time the boot state becomes ok.
+            self.ready = "yes" if self.boot == "ok" else "wait"
+            self.ready_since = self.ok_since
+            return
+        if self.ready != "wait":
+            return
+        if now < self.ready_due:
+            return
+        else:
+            self.ready_due = now + READY_POLL
+            done = os.path.exists(KIOSK_READY) if src == "kiosk" else self.openrc_done()
+        if done:
+            self.ready = "yes"
+            log("ready (%s)" % src)
+        elif now - self.ready_start >= self.ready_timeout and self.boot == "ok":
+            self.ready = "fallback"
+            log("not ready after %d s (%s): the A/B mark is used" % (self.ready_timeout, src))
+        if self.ready != "wait":
+            self.ready_since = now
+
     # ---- the red LED
     def red_check(self):
         """Update the latch from what the red LED shows now. Return the value."""
@@ -329,14 +432,16 @@ class Leds:
     # ---- what each LED should do
     def in_hold(self):
         """Whether the boot display shows the green of a good boot now."""
-        if self.boot != "ok":
+        if self.ready == "wait" or self.boot == "locked":
             return False
-        return self.hold == 0 or self.now - self.ok_since < self.hold
+        return self.hold == 0 or self.now - self.ready_since < self.hold
 
     def effective_status(self):
-        if self.boot != "ok":
+        # Blue until READY, and blue again when the boot state is locked. A
+        # command shows only after the A/B mark (boot ok).
+        if self.ready == "wait" or self.boot == "locked":
             return BOOT_SHOW
-        if self.status:
+        if self.boot == "ok" and self.status:
             return self.status
         return ("green", "solid", None) if self.in_hold() else ("off", "solid", None)
 
@@ -458,6 +563,7 @@ class Leds:
 
     def state_text(self):
         lines = ["boot %s" % self.boot,
+                 "ready %s" % self.ready,
                  "red %s" % ("latched" if self.red_latched else "free")]
         for name in INDICATORS:
             lines.append("%s %s" % (name, words(*self.ind[name])))
@@ -477,10 +583,11 @@ class Leds:
         self.now = now
         self.red_check()
         self.update_boot(now)
+        self.update_ready(now)
         wait = self.sync(now)
         self.publish()
         if self.status is None and self.hold and self.in_hold():
-            end = self.ok_since + self.hold - now        # the end of the green hold
+            end = self.ready_since + self.hold - now        # the end of the green hold
             wait = end if wait is None else min(wait, end)
         return 0.5 if wait is None else max(0.01, min(0.5, wait))
 

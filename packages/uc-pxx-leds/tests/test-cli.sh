@@ -24,7 +24,7 @@ for l in teams_white mute_headset mute_speaker mute_red red green blue; do
 done
 printf '#!/bin/sh\necho "uc-pxx-bootctl: current: A{prio 15 tries 7 succ $(cat "$(dirname "$0")/succ")} B{prio 14 tries 7 succ 1} crc 0" >&2\n' > "$T/bootctl"
 chmod +x "$T/bootctl"; echo 0 > "$T/succ"
-ENVV="UC_PXX_LEDS=$T/leds UC_PXX_LEDS_SOCK=$T/run/sock UC_PXX_LEDS_STATE=$T/state UC_PXX_LEDS_CONF=$T/none UC_PXX_LEDS_SAVE=$T/saved UC_PXX_BOOTCTL=$T/bootctl UC_PXX_SLOT_MARK=$T/mark TSX_RUN_DIR=$T/run UC_PXX_LEDS_GROUPS=nosuchgroup UC_PXX_BOOT_POLL=0.3"
+ENVV="UC_PXX_LEDS=$T/leds UC_PXX_LEDS_SOCK=$T/run/sock UC_PXX_LEDS_STATE=$T/state UC_PXX_LEDS_CONF=$T/none UC_PXX_LEDS_SAVE=$T/saved UC_PXX_BOOTCTL=$T/bootctl UC_PXX_SLOT_MARK=$T/mark TSX_RUN_DIR=$T/run UC_PXX_LEDS_GROUPS=nosuchgroup UC_PXX_READY_SOURCE=bootctl UC_PXX_BOOT_POLL=0.3"
 led() { cat "$T/leds/$1/brightness"; }
 cli() { env -i PATH="$PATH" $ENVV python3 -I -B "$CLI" "$@"; }
 

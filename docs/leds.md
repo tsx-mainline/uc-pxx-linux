@@ -27,7 +27,7 @@ with its mode. The tree `root/` has the install paths.
 | `/usr/local/sbin/uc-pxx-leds` | The daemon (Python, root, OpenRC) |
 | `/etc/init.d/uc-pxx-leds` | The OpenRC service (default runlevel, before `uc-pxx-boot-ok`) |
 | `/usr/local/bin/uc-pxx-led` | The command line tool |
-| `/etc/tsx/uc-pxx-leds.conf` | The settings (`PERSIST`) |
+| `/etc/tsx/uc-pxx-leds.conf` | The settings (`PERSIST`, `READY_SOURCE`, `READY_TIMEOUT_S`, `BOOT_OK_HOLD_S`) |
 | `/usr/local/share/tsx/esphome.d/uc-pxx-leds.py` | The ESPHome plugin |
 
 The package needs `python3`, `openrc` and `uc-pxx-boot-tools` (the program
@@ -67,37 +67,71 @@ color with a red part is different. The daemon never puts a trigger on the
 `red` LED (see "Red LED safety latch"). It makes the pattern itself with plain
 writes. The same is true for an LED that has no such trigger.
 
-## Boot state
+## Boot display
 
-At the start the status LED shows the boot state (the boot display):
+Two separate states drive the status LED. The boot state is the A/B mark. READY
+means that the system is up and the kiosk page shows. The boot display ends
+when the system is READY, not when slot A is marked. The mark comes later
+(about 61 seconds after the start, after the 60 second health wait).
 
-| Boot state | Status LED | Meaning |
-|---|---|---|
-| `wait` | Blue, slow blink (500 ms on, 1500 ms off) | Slot A is not marked successful |
-| `ok` | Green, solid for 10 seconds, then off | Slot A is marked successful |
-| `locked` | Blue, slow blink | A script changed or armed slot A in this boot |
+| Display | Status LED |
+|---|---|
+| Not READY | Blue, slow blink (500 ms on, 1500 ms off) |
+| READY | Green, solid for 10 seconds, then off |
+| Boot state `locked` | Blue, slow blink, also after READY |
 
 The slow blink uses the kernel trigger `timer` (`delay_on` 500, `delay_off`
-1500), or the same timing in software. After a good boot the LED stays dark
+1500), or the same timing in software. After the green time the LED stays dark
 in normal use. `BOOT_OK_HOLD_S` in `/etc/tsx/uc-pxx-leds.conf` sets the green
 time in seconds (default 10). `BOOT_OK_HOLD_S=0` keeps the green on. The green
-time starts each time the state changes to `ok`, also after a restart of the
-daemon.
+time starts when READY becomes true, also after a restart of the daemon.
 
-The daemon reads the state with `uc-pxx-bootctl status`. This command only
+### READY
+
+`READY_SOURCE` in the config file picks how the daemon finds READY:
+
+| Value | READY is true when |
+|---|---|
+| `kiosk` | `/run/tsx/kiosk.ready` exists. `tsx-kiosk-reveal` writes it when the page has painted (`docs/layout.md` of tsx-linux-common) |
+| `openrc` | OpenRC has finished the default runlevel: `rc-status -r` says `default` and no service is `starting`. Without `rc-status`, the file `/run/openrc/started/local` exists |
+| `bootctl` | The boot state is `ok`. This is the old behavior |
+| `auto` | The default. `kiosk` if the service `kiosk` is in the default runlevel (the link `/etc/runlevels/default/kiosk`), else `openrc` |
+
+With `kiosk` and `openrc`, READY is latched. When it is true once, it stays
+true while the daemon runs. A later kiosk restart does not bring the blue blink
+back. The state file line `ready` says `wait`, `yes` or `fallback`.
+
+`READY_TIMEOUT_S` (default 180) is the fallback. If READY is not true that many
+seconds after the daemon started, the daemon goes by the A/B mark, as with
+`bootctl`: the blue blink ends when the boot state is `ok`. The line `ready`
+says `fallback` then. The daemon polls for READY every 2 seconds.
+
+### Boot state
+
+The daemon reads the boot state with `uc-pxx-bootctl status`. This command only
 reads the A/B sector. The daemon asks every 10 seconds while the state is not
 `ok`, and every 60 seconds after that. Slot A is successful when the line
 `current: A{... succ 1}` shows it. A failed read or a missing line is `wait`.
+
+| Boot state | Meaning |
+|---|---|
+| `wait` | Slot A is not marked successful |
+| `ok` | Slot A is marked successful |
+| `locked` | A script changed or armed slot A in this boot |
 
 The state is `locked` while the marker `/run/uc-pxx-slot-a-changed` exists.
 `uc-pxx-arm-slot` creates the marker before it arms slot A. The running image
 then has not been proven good. The state goes back to `ok` when the marker is
 gone and `uc-pxx-bootctl` says that slot A is successful.
 
-Until the state is `ok`, the daemon refuses every `status` command, except
-`status auto`. The indicators work in every state. After the state is `ok`, a
-`status` command changes the status LED. `status auto` goes back to the boot
-display: green until the end of the green time, then off.
+The control of the status LED depends on the boot state only, for every
+`READY_SOURCE`. Until the state is `ok`, the daemon refuses every `status`
+command, except `status auto`. The indicators work in every state. After the
+state is `ok`, a `status` command changes the status LED, but the LED shows it
+only after READY. `status auto` goes back to the boot display: green until the
+end of the green time, then off. A state `wait` with READY (the page is up and
+the mark is not yet there) shows the green time, then the LED goes off and the
+commands stay locked.
 
 ## Red LED safety latch
 
@@ -112,7 +146,8 @@ follows these rules:
 - The latch ends only when the red LED reads 0 again. A person cleared it.
 - The daemon writes red only after it read the value that it wrote last. It
   never turns off a red that it did not turn on.
-- While the state is `wait` or `locked`, the daemon does not write red at all.
+- While the boot state is `wait` or `locked`, the daemon does not write red at
+  all, also when the system is READY.
   A red that the user asked for stays as it is. This closes the race with a
   script that lights red just after it creates the marker.
 - The daemon never puts a kernel trigger on `red`. A write to `brightness` of
@@ -157,7 +192,7 @@ uc-pxx-led status <colour> blink [slow|fast]
 uc-pxx-led show
 ```
 
-`show` prints the boot state, the four indicators, the status LED (shown and
+`show` prints the boot state, READY, the four indicators, the status LED (shown and
 asked), the red latch and the persistence setting. Without a daemon, it prints
 the last state file. The exit status is 0 for done, 1 when the daemon refused
 the command, 2 for wrong use and 3 when the daemon does not answer.
@@ -170,6 +205,7 @@ programs read it. Each line is a key and its words:
 | Line | Values |
 |---|---|
 | `boot` | `ok`, `wait` or `locked` |
+| `ready` | `wait` (not READY), `yes` or `fallback` (the timeout passed and the A/B mark ended the blue blink) |
 | `red` | `free` or `latched` |
 | `teams`, `headset`, `speaker`, `mic` | `off`, `on` or `blink slow\|fast` |
 | `status` | `auto`, or the asked color, mode and speed |
@@ -184,7 +220,7 @@ The default is `no`. The daemon then saves the commands in
 start. A saved `status` command takes effect only after the boot is good. The
 saved file is plain text with the same lines as the commands. A line that does
 not parse is skipped. `rc-service uc-pxx-leds reload` reads the settings
-again (`PERSIST` and `BOOT_OK_HOLD_S`).
+again (`PERSIST`, `BOOT_OK_HOLD_S`, `READY_SOURCE` and `READY_TIMEOUT_S`).
 
 ## ESPHome plugin
 
@@ -273,7 +309,7 @@ tsx-linux-common version with that rule.
 | Test | Checks |
 |---|---|
 | `packages/uc-pxx-leds/tests/test-package.sh` | `FILES` and the tree are the same. No other file writes the LEDs |
-| `packages/uc-pxx-leds/tests/test-daemon.sh` | The daemon with fake LEDs and a stub of `uc-pxx-bootctl`: the commands, the boot state, the colors, the triggers, the red latch, persistence and the socket |
+| `packages/uc-pxx-leds/tests/test-daemon.sh` | The daemon with fake LEDs and a stub of `uc-pxx-bootctl`: the commands, the boot state, READY (the sources and the timeout), the colors, the triggers, the red latch, persistence and the socket |
 | `packages/uc-pxx-leds/tests/test-cli.sh` | `uc-pxx-led` against the real daemon: commands, exit status, `show` |
 | `packages/uc-pxx-leds/tests/test-plugin.sh` | The plugin against `tsx_panel` of tsx-linux-common with stand-ins and a fake daemon. Needs `TSX_COMMON` |
 | `rootfs/tests/test-esphome-plugin.sh` | The board plugin `uc-pxx.py` (the switches). Needs `TSX_COMMON` |
