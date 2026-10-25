@@ -1,5 +1,6 @@
 #!/bin/sh
-# uc-pxx-firmware boot | status: copy the firmware of the unit.
+# uc-pxx-firmware boot | status: copy the firmware of the unit and start the
+# drivers that need it.
 #
 # The Wi-Fi and Bluetooth module (AP6256) needs firmware files that belong to
 # the vendor. The repository and the images hold none. This program copies
@@ -12,13 +13,31 @@
 #
 # The partition is mounted read-only. The program never writes the eMMC.
 #
-#   uc-pxx-firmware boot    copy the files that are not there yet
+# The drivers brcmfmac, hci_uart_bcm and cfg80211 are built into the kernel.
+# They probe from the initramfs, before the root file system is mounted, so
+# they never find these files at their probe. After the copy the program
+# starts them again:
+#   - regulatory.db (package wireless-regdb): "iw reg reload", at every boot.
+#   - Wi-Fi: brcmfmac lets go of the SDIO functions when the firmware is
+#     missing. The program binds each Broadcom SDIO function that has no
+#     driver to brcmfmac. If it copied a Wi-Fi file while brcmfmac was bound,
+#     it unbinds and binds again.
+#   - Bluetooth: hci_uart_bcm runs without its patch when the patch file is
+#     missing. The program unbinds and binds the serdev device if it copied
+#     the patch file in this run, or if the kernel log shows that the patch
+#     was missed in this boot. It does this once per boot.
+# Each step waits for the interface (wlan, hci) and logs the result.
+#
+#   uc-pxx-firmware boot    copy the missing files, then start the drivers
 #   uc-pxx-firmware status  show which files are there
 #
 # Env (test hooks and settings): UC_PXX_FW_PARTS (partition names to try, in
 # order, default "vendor_b vendor_a"), UC_PXX_FW_SRC (a folder with the vendor
 # files, used instead of a partition), UC_PXX_FW_DEST (default /lib/firmware),
-# TSX_SYSBLOCK, TSX_DEVDIR, UC_PXX_RUN.
+# UC_PXX_SYSFS (default /sys), UC_PXX_DMESG (the command that prints the
+# kernel log, default dmesg), UC_PXX_IW (default iw), UC_PXX_FW_WAIT (seconds
+# to wait for each interface, default 10), TSX_SYSBLOCK, TSX_DEVDIR,
+# UC_PXX_RUN.
 #
 # TODO:
 #   - Phase 1 has the files in vendor_b (the stock Android of slot B). Phase 2
@@ -26,20 +45,29 @@
 #     first, and this program must read them from there.
 #   - Choose the NVRAM file by region (FCC for the US, CE for the EU). Today
 #     the program copies the FCC file. The stock firmware also has a CE file.
-#   - After the copy, make the Wi-Fi and Bluetooth drivers probe again. The
-#     drivers are built in and may probe before the files exist. Check on a
-#     unit which way works (a bind through sysfs, or a reload).
 set -eu
 SRC_PARTS=${UC_PXX_FW_PARTS:-vendor_b vendor_a}
 DEST=${UC_PXX_FW_DEST:-/lib/firmware}
 RUN=${UC_PXX_RUN:-/run}
+SYS=${UC_PXX_SYSFS:-/sys}
+DMESG=${UC_PXX_DMESG:-dmesg}
+IW=${UC_PXX_IW:-iw}
+WAIT=${UC_PXX_FW_WAIT:-10}
 MNT=$RUN/uc-pxx-vendor
+# The files that this run copied, one on each line
+COPIED=$RUN/uc-pxx-firmware.copied
+# Bluetooth was started again in this boot (/run is empty at each boot)
+BT_DONE=$RUN/uc-pxx-firmware.bt-done
 say() { echo "uc-pxx-firmware: $*"; }
 
 # MAP: vendor file, then destination, one pair on each line
 MAP='fw_bcm43456c5_ag.bin brcm/brcmfmac43456-sdio.bin
 nvram_ap6256_FCC.txt brcm/brcmfmac43456-sdio.txt
 BCM4345C5.hcd brcm/BCM4345C5.hcd'
+WIFI_FILES='brcm/brcmfmac43456-sdio.bin brcm/brcmfmac43456-sdio.txt'
+BT_FILE=brcm/BCM4345C5.hcd
+# The SDIO vendor ID of Broadcom
+SDIO_BRCM=0x02d0
 
 missing() {
 	echo "$MAP" | while read -r _v d; do [ -s "$DEST/$d" ] || echo "$d"; done
@@ -59,6 +87,7 @@ copy_from() {
 		if [ -s "$1/etc/firmware/$v" ]; then
 			mkdir -p "$DEST/$(dirname "$d")"
 			cp "$1/etc/firmware/$v" "$DEST/$d.part" && mv "$DEST/$d.part" "$DEST/$d"
+			echo "$d" >> "$COPIED"
 			say "copied $d"
 		else
 			say "the vendor partition has no $v"
@@ -66,7 +95,7 @@ copy_from() {
 	done
 }
 
-boot() {
+copy_files() {
 	if [ -z "$(missing)" ]; then say "all firmware files are there"; return 0; fi
 	if [ -n "${UC_PXX_FW_SRC:-}" ]; then copy_from "$UC_PXX_FW_SRC"; return 0; fi
 	for p in $SRC_PARTS; do
@@ -82,6 +111,125 @@ boot() {
 	done
 	say "firmware files missing: $(missing | tr '\n' ' ')"
 	return 0
+}
+
+# copied FILE...: true if this run copied one of the files
+copied() {
+	[ -s "$COPIED" ] || return 1
+	for f in "$@"; do grep -qx "$f" "$COPIED" && return 0; done
+	return 1
+}
+
+# present FILE...: true if all files are in DEST
+present() {
+	for f in "$@"; do [ -s "$DEST/$f" ] || return 1; done
+}
+
+# drv DEVICE-DIR: the name of the driver of a sysfs device, or nothing
+drv() {
+	[ -L "$1/driver" ] || return 0
+	l=$(readlink "$1/driver"); echo "${l##*/}"
+}
+
+# sysw FILE VALUE: write VALUE to a sysfs file, true on success
+sysw() { { echo "$2" > "$1"; } 2>/dev/null; }
+
+# wait_for WHAT TEST...: run TEST every second for up to WAIT seconds
+wait_for() {
+	what=$1; shift
+	t=0
+	while ! "$@"; do
+		if [ "$t" -ge "$WAIT" ]; then say "no $what after $t s (limit $WAIT s)"; return 1; fi
+		[ "$t" -gt 0 ] && [ $((t % 2)) = 0 ] && say "waiting for $what: $t s of $WAIT s"
+		sleep 1; t=$((t + 1))
+	done
+	return 0
+}
+
+regdb() {
+	[ -s "$DEST/regulatory.db" ] || { say "no regulatory.db (package wireless-regdb)"; return 0; }
+	command -v "$IW" >/dev/null 2>&1 || { say "no $IW: regulatory.db not loaded"; return 0; }
+	if "$IW" reg reload 2>/dev/null; then say "loaded regulatory.db (iw reg reload)"
+	else say "iw reg reload failed"; fi
+}
+
+wifi_up() {
+	for n in "$SYS"/bus/sdio/drivers/brcmfmac/*/net/*; do [ -e "$n" ] && return 0; done
+	return 1
+}
+
+wifi() {
+	present $WIFI_FILES || { say "Wi-Fi: firmware files missing, driver not started"; return 0; }
+	B=$SYS/bus/sdio/drivers/brcmfmac
+	[ -d "$B" ] || { say "Wi-Fi: no brcmfmac driver in the kernel"; return 0; }
+	# The Broadcom SDIO functions in name order: function 1 comes first.
+	# brcmfmac takes function 1 and needs it for function 2.
+	funcs=
+	for d in "$SYS"/bus/sdio/devices/*; do
+		[ -r "$d/vendor" ] && [ "$(cat "$d/vendor")" = "$SDIO_BRCM" ] && funcs="$funcs ${d##*/}"
+	done
+	[ -n "$funcs" ] || { say "Wi-Fi: no Broadcom SDIO device"; return 0; }
+	if copied $WIFI_FILES; then
+		# New files while the driver runs: unbind in the reverse order.
+		rev=; for n in $funcs; do rev="$n $rev"; done
+		for n in $rev; do
+			[ "$(drv "$SYS/bus/sdio/devices/$n")" = brcmfmac ] || continue
+			sysw "$B/unbind" "$n" && say "Wi-Fi: unbound $n (new firmware files)"
+		done
+	fi
+	bound=0
+	for n in $funcs; do
+		[ -z "$(drv "$SYS/bus/sdio/devices/$n")" ] || continue
+		if sysw "$B/bind" "$n"; then say "Wi-Fi: bound $n to brcmfmac"; bound=1
+		else say "Wi-Fi: binding $n to brcmfmac failed"; fi
+	done
+	if [ "$bound" = 0 ]; then
+		if wifi_up; then say "Wi-Fi: driver already running"; else say "Wi-Fi: driver bound, but no interface"; fi
+		return 0
+	fi
+	if wait_for "Wi-Fi interface" wifi_up; then
+		for n in "$B"/*/net/*; do [ -e "$n" ] && say "Wi-Fi: interface ${n##*/} is up"; done
+	fi
+	return 0
+}
+
+bt_up() {
+	for h in "$SYS"/class/bluetooth/hci*; do [ -e "$h" ] && return 0; done
+	return 1
+}
+
+bt() {
+	present "$BT_FILE" || { say "Bluetooth: patch file missing, the controller runs its ROM firmware"; return 0; }
+	B=$SYS/bus/serial/drivers/hci_uart_bcm
+	[ -d "$B" ] || { say "Bluetooth: no hci_uart_bcm driver in the kernel"; return 0; }
+	[ -e "$BT_DONE" ] && { say "Bluetooth: already started again in this boot"; return 0; }
+	why=
+	if copied "$BT_FILE"; then why="new patch file"
+	elif ! log=$($DMESG 2>/dev/null); then why="kernel log not readable"
+	elif echo "$log" | grep -q 'BCM: firmware Patch file not found'; then why="patch missed at the probe"
+	fi
+	[ -n "$why" ] || { say "Bluetooth: the patch is loaded"; return 0; }
+	devs=
+	for d in "$B"/*; do
+		[ "${d##*/}" != module ] && [ -L "$d" ] && [ -e "$d/uevent" ] && devs="$devs ${d##*/}"
+	done
+	[ -n "$devs" ] || { say "Bluetooth: no device on hci_uart_bcm"; return 0; }
+	: > "$BT_DONE"
+	for n in $devs; do
+		if sysw "$B/unbind" "$n" && sysw "$B/bind" "$n"; then say "Bluetooth: started $n again ($why)"
+		else say "Bluetooth: rebind of $n failed"; fi
+	done
+	wait_for "Bluetooth controller" bt_up && say "Bluetooth: controller is back"
+	return 0
+}
+
+boot() {
+	rm -f "$COPIED"
+	copy_files
+	regdb
+	wifi
+	bt
+	rm -f "$COPIED"
 }
 
 status() {

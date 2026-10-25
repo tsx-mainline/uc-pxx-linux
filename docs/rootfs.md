@@ -212,7 +212,7 @@ All services of this family start with `uc-pxx-`.
 |---|---|---|
 | `uc-pxx-lvm` | boot | Done. Activates the data volume |
 | `uc-pxx-watchdog` | boot | Done. Feeds `/dev/watchdog0` with the busybox watchdog |
-| `uc-pxx-firmware` | boot | Copies the Wi-Fi and Bluetooth files from the vendor partition. See "Firmware" |
+| `uc-pxx-firmware` | boot | Copies the Wi-Fi and Bluetooth files from the vendor partition and starts their drivers again. See "Firmware" |
 | `uc-pxx-switch` | boot | Sets the MAC address and starts the Ethernet switch. Not tested in this form |
 | `uc-pxx-audio` | default | Done. Mixer defaults and volume |
 | `uc-pxx-boot-ok` | default | Starts the boot-marking hook. See [boot-control.md](boot-control.md) |
@@ -296,13 +296,26 @@ vendor partition (mounted read-only) to `/lib/firmware/brcm`:
 | `nvram_ap6256_FCC.txt` | `brcmfmac43456-sdio.txt` |
 | `BCM4345C5.hcd` | `BCM4345C5.hcd` |
 
+The drivers `brcmfmac`, `hci_uart_bcm` and `cfg80211` are built into the
+kernel. They probe from the initramfs, before the root file system is
+mounted, so they never find the files at their probe. After the copy,
+`uc-pxx-firmware boot` starts them again:
+
+| Driver | What the program does |
+|---|---|
+| `cfg80211` | `iw reg reload` at each boot. It loads `/lib/firmware/regulatory.db` (package `wireless-regdb`) |
+| `brcmfmac` | It binds each Broadcom SDIO function (vendor `0x02d0`) that has no driver, function 1 first. `brcmfmac` lets go of both functions when the firmware is missing. If the program copied a Wi-Fi file while `brcmfmac` was bound, it unbinds both first |
+| `hci_uart_bcm` | It unbinds and binds the serdev device once per boot, if it copied the patch file in this run, or if the kernel log has `BCM: firmware Patch file not found` |
+
+Each step waits up to 10 seconds for the interface (`wlan0`, `hci0`) and
+logs the result. The service runs in the boot runlevel, before `networking`
+and `bluetooth`.
+
 Open points:
 
 - Phase 1 reads them from `vendor_b`. Phase 2 has no vendor partition. The
   installer must save the files to `/data` first.
 - The program always copies the FCC NVRAM file. It must choose by region.
-- The drivers are built in. They may probe before the files exist. A re-probe
-  after the copy is not written yet.
 
 ### Switch
 
@@ -356,7 +369,7 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 | `rootfs/tests/test-als.sh` | `uc-pxx-als` and `tsx-als` with a made-up IIO device: counts to lux, the files, the backlight range, a reload |
 | `rootfs/tests/test-presence.sh` | `uc-pxx-presence` with a made-up input device: the find of the switch, the states, the wake call, a reload |
 | `rootfs/tests/test-audio.sh` | `uc-pxx-audio` with a stub `amixer` |
-| `rootfs/tests/test-firmware.sh` | `uc-pxx-firmware` with a made-up vendor folder |
+| `rootfs/tests/test-firmware.sh` | `uc-pxx-firmware` with a made-up vendor folder and a made-up `/sys` |
 | `rootfs/tests/test-esphome-plugin.sh` | The board plugin `uc-pxx.py` (the switches) against `tsx_panel` of tsx-linux-common |
 | `packages/uc-pxx-leds/tests/test-*.sh` | The LED package: the file list, the daemon, the command and the ESPHome plugin (see [leds.md](leds.md)) |
 | `rootfs/tests/test-switch.sh` | `uc-pxx-switch` with stub tools |

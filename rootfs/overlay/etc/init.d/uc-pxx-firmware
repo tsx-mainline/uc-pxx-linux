@@ -1,12 +1,15 @@
 #!/sbin/openrc-run
 # Copy the firmware of the unit (Wi-Fi and Bluetooth) from its vendor partition
-# into the root file system once (uc-pxx-firmware boot). The repository holds
-# no firmware file.
+# into the root file system once, then start the built-in drivers again that
+# probed before the files were there (uc-pxx-firmware boot). The repository
+# holds no firmware file.
 description="Firmware of the unit (Wi-Fi and Bluetooth, from the vendor partition)"
 depend() {
 	need localmount
 	after tsx-data
-	before networking
+	# The Wi-Fi and Bluetooth drivers must have their firmware before the
+	# network and Bluetooth services start.
+	before networking bluetooth wpa_supplicant iwd
 }
 start() {
 	ebegin "Firmware of the unit"
