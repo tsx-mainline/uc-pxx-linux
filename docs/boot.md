@@ -156,6 +156,9 @@ device tree) and the MAC address (from the `cfg` partition, bytes 6 to 11).
   the turned panel (`fbcon=rotate:3`) the console is 1920x1200 and the font
   is 16x32 (120x37 cells).
 - The backlight is set to `TSX_RESCUE_BACKLIGHT` percent (50).
+- The blue LED blinks fast (250 ms on, 250 ms off) in the rescue system. During
+  the normal boot it blinks slowly (500 ms on, 1500 ms off), see
+  [leds.md](leds.md) "The boot timeline of the blue LED".
 - A root shell on the serial console `ttyS2` (115200 baud). It needs no
   login.
 - In the background: the MAC address of eth0, the switch init with
@@ -181,6 +184,7 @@ The tools in the rescue:
 | `uc-pxx-install-rootfs` | Writes a `rootfs.ext4` into `system_a` (`mmcblk0p22`, GPT name `system_a`). Nothing else |
 | `tsx-data-backup`, `tsx-data-restore` | Back up and restore the panel data. The unit has no data partition, so it works on the root file system (`/data`, `/root`, `/home`, `/var/lib/...`) |
 | `uc-pxx-bootctl status` | Shows the A/B state |
+| `uc-pxx-reboot loader` | Restarts into the loader (download) mode. See "The loader mode" |
 
 `uc-pxx-install-rootfs` does a preflight first and stops at the first
 failed check: the partition is `mmcblk0p22`, on the eMMC, exactly 1792 MiB,
@@ -208,9 +212,39 @@ Other options of the kernel command line: `uc-pxx.rootwait=N` (seconds,
 default 15) and `uc-pxx.init=PATH` (default `/sbin/init`).
 
 The build takes the tools from a checkout of tsx-linux-common (`TSX_COMMON`),
-the reviewed `uc-pxx-bootctl` (`UC_PXX_BOOTCTL`, checked by its sha256) and
+the reviewed `uc-pxx-bootctl` (`UC_PXX_BOOTCTL`, checked by its sha256),
+`uc-pxx-reboot` (`UC_PXX_REBOOT`, `tools/uc-pxx-reboot/build.sh`) and
 `RTL8363_INIT` (the tool of `tools/rtl8363-init`, built with the Realtek SDK)
 as files. This repository holds none of them.
+
+### The loader mode
+
+The stock Android system handled the key combination Volume down + Mute (the
+download or loader mode of the Rockchip tools). U-Boot does not. So mainline
+does it. The keys are touch keys of the maXTouch controller: `KEY_MUTE` (113)
+and `KEY_VOLUMEDOWN` (114), see `rootfs/overlay/etc/tsx/buttons-board.conf`.
+The code reads the key state with `evtest --query` (EVIOCGKEY), because
+`tsx-idled` grabs the input devices.
+
+- `/init` checks the keys early. If both are down, it shows the line "Loader
+  mode: keep holding Vol- and Mute". After 3 s it shows "Loader mode:
+  restarting" and runs `uc-pxx-reboot loader`. With no key down the check adds
+  no delay. If a key is released, the boot goes on.
+- The service `uc-pxx-loader-key` (default runlevel) does the same on the
+  running system: hold both keys for 10 s at any time.
+- `uc-pxx-reboot loader` calls `reboot(2)` with `RESTART2` and the argument
+  `loader` (the busybox `reboot` has no argument). The device tree node
+  `reboot-mode` (`syscon-reboot-mode` on the PMU GRF, offset `0x300`,
+  `mode-loader = <BOOT_BL_DOWNLOAD>`) turns the argument into the magic value
+  `0x5242c301`. It is the value of the stock device tree. The vendor U-Boot
+  then enters the download mode (rockusb). The kernel branch `uc-pxx-lts`
+  carries the node since `dce705391a49`.
+- Nothing is written to the eMMC. A power cycle leaves the loader mode.
+- The rescue system has the same program: `uc-pxx-reboot loader`.
+
+The first test needs a unit: hold the keys at the boot and look for the
+rockusb device on the USB-C port of a host. The state of a touch key that is
+held from before the driver probed has not been tested.
 
 ### The boot splash
 

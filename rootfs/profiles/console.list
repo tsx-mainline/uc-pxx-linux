@@ -73,6 +73,7 @@ svc boot tsx-hostname
 svc default uc-pxx-audio
 svc default uc-pxx-als
 svc default uc-pxx-presence
+svc default uc-pxx-loader-key
 svc default tsx-idled
 svc default tsx-buttons
 svc default tsx-panelctl

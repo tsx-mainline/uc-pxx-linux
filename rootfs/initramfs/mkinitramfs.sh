@@ -20,6 +20,9 @@
 #                    uc-pxx-install-rootfs only read the A/B state with it.
 #                    Its sha256 must be the reviewed one
 #                    (docs/boot-control.md), or the build stops
+#   UC_PXX_REBOOT    required: the static aarch64 uc-pxx-reboot
+#                    (tools/uc-pxx-reboot/build.sh). /init runs
+#                    `uc-pxx-reboot loader` when Volume down + Mute are held
 #   RTL8363_INIT     optional: the static aarch64 rtl8363-init
 #                    (tools/rtl8363-init/build.sh). Without it the rescue has
 #                    no wired network
@@ -49,14 +52,16 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 BOOTCTL_SHA256=38fea6d32412e7977ebc5845b138dc1c8c2df8555dae0b64b47f8a851b45e2d7
 [ -n "${UC_PXX_BOOTCTL:-}" ] && [ -x "$UC_PXX_BOOTCTL" ] || { echo "mkinitramfs.sh: UC_PXX_BOOTCTL (the static uc-pxx-bootctl) is required"; exit 1; }
 [ "$(sha256sum "$UC_PXX_BOOTCTL" | cut -d' ' -f1)" = "$BOOTCTL_SHA256" ] || { echo "mkinitramfs.sh: UC_PXX_BOOTCTL is not the reviewed uc-pxx-bootctl ($BOOTCTL_SHA256)"; exit 1; }
+[ -n "${UC_PXX_REBOOT:-}" ] && [ -x "$UC_PXX_REBOOT" ] || { echo "mkinitramfs.sh: UC_PXX_REBOOT (the static uc-pxx-reboot) is required"; exit 1; }
 [ -n "${TSX_COMMON:-}" ] && [ -d "$TSX_COMMON/rescue/usr/sbin" ] || { echo "mkinitramfs.sh: TSX_COMMON (a tsx-linux-common checkout with rescue/usr/sbin) is required"; exit 1; }
 MIRROR=${MIRROR:-https://dl-cdn.alpinelinux.org/alpine}
 printf '%s/%s/main\n%s/%s/community\n' "$MIRROR" "${ALPINE:-v3.24}" "$MIRROR" "${ALPINE:-v3.24}" > /etc/apk/repositories
 R=/tmp/initramfs; rm -rf $R; mkdir -p $R
-# e2fsprogs: e2fsck and dumpe2fs. e2fsprogs-extra: resize2fs.
+# e2fsprogs: e2fsck and dumpe2fs. e2fsprogs-extra: resize2fs. evtest: the key
+# state for the loader mode (/init).
 apk add --root $R --initdb --no-cache -q \
 	--repositories-file /etc/apk/repositories --keys-dir /etc/apk/keys \
-	alpine-baselayout busybox busybox-binsh dropbear e2fsprogs e2fsprogs-extra
+	alpine-baselayout busybox busybox-binsh dropbear e2fsprogs e2fsprogs-extra evtest
 cp -a "$HERE"/overlay/. $R/
 chmod 755 $R/init $R/etc/init.d/rcS $R/usr/sbin/uc-pxx-install-rootfs $R/usr/sbin/uc-pxx-rescue-help
 # The shared rescue tools of tsx-linux-common (package tsx-rescue-ui). The
@@ -68,6 +73,7 @@ done
 echo "rescue tools: $(cd "$TSX_COMMON" && git describe --always --dirty 2>/dev/null || echo 'tsx-linux-common, no git')"
 install -D -m 644 /w/rootfs/overlay/usr/local/lib/tsx/board.sh $R/usr/local/lib/tsx/board.sh
 install -D -m 755 "$UC_PXX_BOOTCTL" $R/usr/sbin/uc-pxx-bootctl
+install -D -m 755 "$UC_PXX_REBOOT" $R/usr/sbin/uc-pxx-reboot
 [ "$(sha256sum $R/usr/sbin/uc-pxx-bootctl | cut -d' ' -f1)" = "$BOOTCTL_SHA256" ] || { echo "mkinitramfs.sh: uc-pxx-bootctl changed in the copy"; exit 1; }
 # Terminus bold console fonts for tsx-confont (SIL OFL 1.1). It picks the
 # largest one that gives at least 80x25 cells on the console: 16x32 on the
@@ -141,7 +147,7 @@ fi
 for f in /sbin/init /sbin/switch_root /sbin/findfs /sbin/blkid /sbin/e2fsck /usr/sbin/resize2fs /usr/sbin/dumpe2fs \
 	/usr/sbin/dropbear /usr/share/udhcpc/default.script /usr/sbin/tsx-rescue-status /usr/sbin/tsx-rescue-login \
 	/usr/sbin/tsx-rescue-backlight /usr/sbin/tsx-confont /usr/sbin/tsx-data-backup /usr/sbin/uc-pxx-install-rootfs \
-	/usr/sbin/uc-pxx-bootctl /usr/share/tsx/consolefonts/ter-132b.psf /usr/local/lib/tsx/board.sh; do
+	/usr/sbin/uc-pxx-bootctl /usr/sbin/uc-pxx-reboot /usr/bin/evtest /usr/share/tsx/consolefonts/ter-132b.psf /usr/local/lib/tsx/board.sh; do
 	[ -e "$R$f" ] || { echo "mkinitramfs.sh: $f is missing in the initramfs"; exit 1; }
 done
 echo uc-pxx-rescue > $R/etc/hostname

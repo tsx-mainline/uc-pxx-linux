@@ -1,0 +1,61 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# uc-pxx-loader-key: hold Volume down and Mute (the mic key) for about 10
+# seconds at any time, and the unit restarts into the loader (download) mode
+# with `uc-pxx-reboot loader`. The stock Android system did this itself, and
+# mainline has to do it too. The unit then waits for a host (rockusb). It
+# writes nothing to the eMMC. A power cycle leaves the loader mode.
+#
+# The two keys are touch keys of the maXTouch controller: KEY_MUTE (113) and
+# KEY_VOLUMEDOWN (114) in rootfs/overlay/etc/tsx/buttons-board.conf. tsx-idled
+# grabs the input devices, so this program does not read events. It polls the
+# key state of the device with `evtest --query` (EVIOCGKEY).
+#
+#   uc-pxx-loader-key            the service loop
+#   uc-pxx-loader-key --probe    exit 0 if the key device exists
+# Env (tests): UC_PXX_HOLD_S (10), UC_PXX_POLL_S (0.5), UC_PXX_SYSINPUT
+# (/sys/class/input), UC_PXX_DEVINPUT (/dev/input), UC_PXX_EVTEST (evtest),
+# UC_PXX_REBOOT (uc-pxx-reboot), UC_PXX_ONCE (1: end after one reboot call).
+HOLD=${UC_PXX_HOLD_S:-10}
+POLL=${UC_PXX_POLL_S:-0.5}
+SYSIN=${UC_PXX_SYSINPUT:-/sys/class/input}
+DEVIN=${UC_PXX_DEVINPUT:-/dev/input}
+EVTEST=${UC_PXX_EVTEST:-evtest}
+REBOOT=${UC_PXX_REBOOT:-uc-pxx-reboot}
+log() { echo "uc-pxx-loader-key: $*"; echo "uc-pxx-loader-key: $*" > /dev/kmsg 2>/dev/null; }
+
+# the event node of the touch controller (the keys T15 are part of it)
+keydev() {
+	for n in "$SYSIN"/event*/device/name; do
+		[ -r "$n" ] || continue
+		case $(cat "$n" 2>/dev/null) in
+		*maXTouch*) e=${n%/device/name}; echo "$DEVIN/${e##*/}"; return 0;;
+		esac
+	done
+	return 1
+}
+# held DEV: both keys are down now
+held() {
+	"$EVTEST" --query "$1" EV_KEY KEY_MUTE 2>/dev/null; [ $? = 10 ] || return 1
+	"$EVTEST" --query "$1" EV_KEY KEY_VOLUMEDOWN 2>/dev/null; [ $? = 10 ]
+}
+
+[ "${1:-}" = --probe ] && { keydev > /dev/null; exit; }
+log "watching Volume down + Mute (hold ${HOLD} s for the loader mode)"
+since=
+while :; do
+	if dev=$(keydev) && held "$dev"; then
+		now=$(cut -d. -f1 /proc/uptime)
+		[ -n "$since" ] || since=$now
+		if [ $((now - since)) -ge "$HOLD" ]; then
+			log "Volume down + Mute held for ${HOLD} s: restarting into the loader mode"
+			"$REBOOT" loader || log "$REBOOT loader failed"
+			[ -z "${UC_PXX_ONCE:-}" ] || exit 0
+			since=
+			sleep 30
+		fi
+	else
+		since=
+	fi
+	sleep "$POLL"
+done

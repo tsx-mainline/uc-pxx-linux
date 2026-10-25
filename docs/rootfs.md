@@ -230,6 +230,7 @@ All services of this family start with `uc-pxx-`.
 | `uc-pxx-audio` | default | Done. Mixer defaults and volume |
 | `uc-pxx-boot-ok` | default | Starts the boot-marking hook. See [boot-control.md](boot-control.md) |
 | `uc-pxx-presence` | default | Done. Reads the PIR switch and writes the presence state. See "Presence" |
+| `uc-pxx-loader-key` | default | Volume down + Mute held for 10 s: `uc-pxx-reboot loader` (the loader mode). See [boot.md](boot.md) "The loader mode" |
 | `uc-pxx-als` | default | Done. Reads the light sensor and feeds the automatic brightness. See "Ambient light" |
 | `uc-pxx-leds` | default | The LED daemon, from the package `uc-pxx-leds`. It owns the four indicators and the RGB status LED, and shows the boot state. See [leds.md](leds.md) |
 
@@ -410,6 +411,9 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 | `rootfs/tests/test-board.sh` | The board values, the board hook, the MAC address, the model, the key codes and the absence of LED settings |
 | `rootfs/tests/test-hw.sh` | `tsx-hw` with a made-up `/sys`: the facts and the layers of `panel-board.d` |
 | `rootfs/tests/test-als.sh` | `uc-pxx-als` and `tsx-als` with a made-up IIO device: counts to lux, the files, the backlight range, a reload |
+| `rootfs/tests/test-loader-key.sh` | The loader mode keys: `uc-pxx-loader-key`, the check in `/init`, the device tree node |
+| `rootfs/tests/test-rescue.sh` | The rescue system: the screen, the console font, the login, the build file |
+| `rootfs/tests/test-install-rootfs.sh` | `uc-pxx-install-rootfs` against a made-up `/sys` and `/dev` |
 | `rootfs/tests/test-presence.sh` | `uc-pxx-presence` with a made-up input device: the find of the switch, the states, the wake call, a reload |
 | `rootfs/tests/test-audio.sh` | `uc-pxx-audio` with a stub `amixer` |
 | `rootfs/tests/test-firmware.sh` | `uc-pxx-firmware` with a made-up vendor folder and a made-up `/sys` |

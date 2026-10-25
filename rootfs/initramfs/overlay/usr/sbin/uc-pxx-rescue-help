@@ -10,6 +10,8 @@ echo "  uc-pxx-bootctl status     show the A/B state (read only: never mark or a
 echo "  uc-pxx-install-rootfs     write a rootfs.ext4 into system_a (see --help)"
 echo "  tsx-data-backup           back up the panel data (see --help)"
 echo "  tsx-data-restore          put a backup back (see --help)"
+echo "  uc-pxx-reboot loader      restart into the loader (download) mode. Writes nothing."
+echo "                            Volume down + Mute held for 3 s at the boot do the same"
 echo "  reboot -f                 boot again (the root file system, if it is there)"
 echo "The rescue writes nothing else: boot_a is written on the running system"
 echo "with uc-pxx-flash-boot."

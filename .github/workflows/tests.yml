@@ -47,6 +47,8 @@ jobs:
         run: busybox sh rootfs/tests/test-rescue.sh
       - name: rootfs/tests/test-install-rootfs.sh - uc-pxx-install-rootfs against a made-up /sys and /dev
         run: busybox sh rootfs/tests/test-install-rootfs.sh
+      - name: rootfs/tests/test-loader-key.sh - Volume down + Mute for the loader mode, in the service and in /init
+        run: busybox sh rootfs/tests/test-loader-key.sh
       - name: rootfs/tests/test-board.sh - the board file, the MAC address from the cfg partition and the model
         run: sh rootfs/tests/test-board.sh
       - name: rootfs/tests/test-hw.sh - tsx-hw facts and the layers of panel-board.d with a made-up /sys

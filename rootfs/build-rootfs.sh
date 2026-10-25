@@ -43,6 +43,9 @@
 #               script files of that checkout over the installed common
 #               packages (mkrootfs.sh). The list is in /etc/tsx/dev-common-overlay
 #               of the image.
+#   UC_PXX_REBOOT  "initramfs" (required) and DEV mode: the static aarch64
+#               uc-pxx-reboot (tools/uc-pxx-reboot/build.sh), for the loader
+#               mode with Volume down + Mute
 #   UC_PXX_BOOTCTL  "initramfs" (required) and DEV mode: the static aarch64 uc-pxx-bootctl
 #               (tools/uc-pxx-bootctl/build.sh). Its sha256 must be the
 #               reviewed one (docs/boot-control.md), or the build stops.
@@ -242,6 +245,8 @@ initramfs() {
 	in_file RTL8363_INIT "${RTL8363_INIT:-}"
 	[ -n "${UC_PXX_BOOTCTL:-}" ] || { echo "UC_PXX_BOOTCTL is required (tools/uc-pxx-bootctl/build.sh)"; exit 1; }
 	in_file UC_PXX_BOOTCTL "$UC_PXX_BOOTCTL"
+	[ -n "${UC_PXX_REBOOT:-}" ] || { echo "UC_PXX_REBOOT is required (tools/uc-pxx-reboot/build.sh)"; exit 1; }
+	in_file UC_PXX_REBOOT "$UC_PXX_REBOOT"
 	[ -n "${TSX_COMMON:-}" ] || { echo "TSX_COMMON is required (a tsx-linux-common checkout, for the rescue tools)"; exit 1; }
 	common_args
 	if [ -n "${TSX_APK_LOCAL:-}" ]; then
@@ -280,7 +285,9 @@ rootfs() {
 			echo "WARNING: UC_PXX_DEV_COMMON=1: common files from $TSX_COMMON over the packages (TEST BUILD)"
 			dargs+=(-e UC_PXX_DEV_COMMON=1)
 		fi
+		[ -n "${UC_PXX_REBOOT:-}" ] || { echo "UC_PXX_DEV_OVERLAY=1 needs UC_PXX_REBOOT"; exit 1; }
 		in_file UC_PXX_BOOTCTL "$UC_PXX_BOOTCTL"
+		in_file UC_PXX_REBOOT "$UC_PXX_REBOOT"
 		in_file RTL8363_INIT "$RTL8363_INIT"
 	fi
 	mkdir -p "$HOME/.cache/uc-pxx-pip"

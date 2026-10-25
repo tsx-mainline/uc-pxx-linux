@@ -1,0 +1,26 @@
+#!/sbin/openrc-run
+# Volume down + Mute held for 10 seconds: restart into the loader mode
+# (uc-pxx-loader-key). The unit writes nothing to the eMMC.
+description="Hold Volume down + Mute for 10 s: reboot into the loader mode"
+supervisor=supervise-daemon
+command=/usr/local/sbin/uc-pxx-loader-key
+respawn_delay=5
+respawn_max=0
+output_log=/var/log/uc-pxx-loader-key.log
+error_log=/var/log/uc-pxx-loader-key.log
+depend() {
+	need localmount
+	after udev-settle
+}
+start() {
+	# a unit without the touch keys: nothing to run, no failure
+	if ! /usr/local/sbin/uc-pxx-loader-key --probe 2>/dev/null; then
+		einfo "uc-pxx-loader-key: no touch key device here, not started"
+		return 0
+	fi
+	default_start
+}
+stop() {
+	[ -e "/run/supervise-$RC_SVCNAME.pid" ] || return 0
+	default_stop
+}

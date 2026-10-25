@@ -32,7 +32,7 @@
 #               "Profiles" say what each profile has.
 #   UC_PXX_DEV_OVERLAY  TEST ONLY. 1 builds without the uc-pxx packages
 #               (docs/rootfs.md "Test build without the uc-pxx packages"). It
-#               needs UC_PXX_BOOTCTL and RTL8363_INIT (build-rootfs.sh).
+#               needs UC_PXX_BOOTCTL, UC_PXX_REBOOT and RTL8363_INIT (build-rootfs.sh).
 #   UC_PXX_DEV_COMMON  TEST ONLY, with UC_PXX_DEV_OVERLAY=1 and TSX_COMMON.
 #               1 copies the script files of the TSX_COMMON checkout over the
 #               files of the installed common packages, so the image has
@@ -63,6 +63,7 @@ BOOTCTL_SHA256=38fea6d32412e7977ebc5845b138dc1c8c2df8555dae0b64b47f8a851b45e2d7
 if [ "$DEV" = 1 ]; then
 	log "TEST BUILD (UC_PXX_DEV_OVERLAY=1): no uc-pxx packages, the repository files instead. Never publish this image."
 	[ -r "${UC_PXX_BOOTCTL:-}" ] || { echo "UC_PXX_DEV_OVERLAY=1: no UC_PXX_BOOTCTL"; exit 1; }
+	[ -r "${UC_PXX_REBOOT:-}" ] || { echo "UC_PXX_DEV_OVERLAY=1: no UC_PXX_REBOOT"; exit 1; }
 	[ -r "${RTL8363_INIT:-}" ] || { echo "UC_PXX_DEV_OVERLAY=1: no RTL8363_INIT"; exit 1; }
 	sum=$(sha256sum "$UC_PXX_BOOTCTL" | cut -d' ' -f1)
 	[ "$sum" = "$BOOTCTL_SHA256" ] || { echo "ERROR: UC_PXX_BOOTCTL has sha256 $sum, the reviewed binary is $BOOTCTL_SHA256"; exit 1; }
@@ -182,6 +183,7 @@ if [ "$DEV" = 1 ]; then
 	done
 	install -m 755 -o 0 -g 0 "$UC_PXX_BOOTCTL" $R/usr/sbin/uc-pxx-bootctl
 	install -m 755 -o 0 -g 0 "$RTL8363_INIT" $R/usr/sbin/rtl8363-init
+	install -m 755 -o 0 -g 0 "$UC_PXX_REBOOT" $R/usr/sbin/uc-pxx-reboot
 	[ "$(sha256sum $R/usr/sbin/uc-pxx-bootctl | cut -d' ' -f1)" = "$BOOTCTL_SHA256" ] || { echo "ERROR: uc-pxx-bootctl changed in the copy"; exit 1; }
 	mkdir -p $R/etc/tsx
 	echo "TEST BUILD (UC_PXX_DEV_OVERLAY=1), not from the uc-pxx packages. Do not publish." > $R/etc/tsx/dev-overlay
