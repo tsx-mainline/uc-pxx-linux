@@ -2,7 +2,10 @@
 
 The UC-P10 has seven LEDs. They are status indicators, not key backlights.
 The package `uc-pxx-leds` owns all of them. The daemon `uc-pxx-leds` is the
-only program that writes them. `tsx-buttons` does not touch them.
+only program that writes them. `tsx-buttons` does not touch them. Two
+exceptions come before the daemon: the kernel (the device tree trigger of the
+blue LED) and `/init` of the initramfs (the blink timing of the blue LED), see
+"The boot timeline of the blue LED".
 
 | LED class device | What it is | Name in this package |
 |---|---|---|
@@ -85,6 +88,20 @@ The slow blink uses the kernel trigger `timer` (`delay_on` 500, `delay_off`
 in normal use. `BOOT_OK_HOLD_S` in `/etc/tsx/uc-pxx-leds.conf` sets the green
 time in seconds (default 10). `BOOT_OK_HOLD_S=0` keeps the green on. The green
 time starts when READY becomes true, also after a restart of the daemon.
+
+### The boot timeline of the blue LED
+
+The blue LED blinks from early in the boot, not from the daemon start:
+
+| Time | What blinks the blue LED |
+|---|---|
+| About 1 s | The LED driver probes. The device tree gives the blue LED the trigger `timer` (`linux,default-trigger`). The kernel default is 500 ms on, 500 ms off. The green and red LEDs have no trigger and stay off |
+| `/init` | `/init` sets `delay_on` 500 and `delay_off` 1500, the slow blink of the daemon. In the rescue system `/init` sets 250 ms on and 250 ms off (a fast blink), because no daemon runs there |
+| Default runlevel | `uc-pxx-leds` starts. If the system is not READY and the blue LED already has the trigger `timer` with 500 and 1500, the daemon does not write the trigger or the delays. The blink goes on with no gap and no restart |
+| READY | The daemon shows green for `BOOT_OK_HOLD_S` seconds, then switches the LED off |
+
+If the blue LED has another trigger or other delays, the daemon sets the
+boot blink as before.
 
 ### READY
 

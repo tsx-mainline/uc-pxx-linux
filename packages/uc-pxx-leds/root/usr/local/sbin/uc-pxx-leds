@@ -467,6 +467,15 @@ class Leds:
             self.triggers[led] = [w.strip("[]") for w in text.split()]
         return name in self.triggers[led]
 
+    def timer_is(self, base, timing):
+        """Whether the LED has the trigger timer now with this timing."""
+        text = read_text(os.path.join(base, "trigger")) or ""
+        if "[timer]" not in text.split():
+            return False
+        on, off = timing
+        return (read_int(os.path.join(base, "delay_on")) == int(on * 1000)
+                and read_int(os.path.join(base, "delay_off")) == int(off * 1000))
+
     def set_plain(self, led, val):
         """Solid value: no trigger, then the brightness."""
         base = os.path.join(LEDS, led)
@@ -490,8 +499,14 @@ class Leds:
         trig = "timer" if mode == "blink" else "heartbeat"
         if self.has_trigger(led, trig):
             key = (trig, speed)
+            base = os.path.join(LEDS, led)
+            if led not in self.applied and trig == "timer" and self.timer_is(base, TIMING[speed or "slow"]):
+                # The kernel (the device tree trigger) and /init already blink
+                # this LED with this timing. Writing the trigger or the delays
+                # again would restart the blink and leave a gap.
+                self.applied[led] = key
+                self.soft_val.pop(led, None)
             if self.applied.get(led) != key:
-                base = os.path.join(LEDS, led)
                 write_text(os.path.join(base, "trigger"), trig)
                 if trig == "timer":
                     on, off = TIMING[speed or "slow"]

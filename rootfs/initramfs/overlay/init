@@ -25,6 +25,9 @@
 # Root file system file:
 #   /etc/uc-pxx-force-rescue   start the rescue system once (the file is removed)
 #
+# LED: the blue LED blinks slowly during the boot (the device tree trigger
+# "timer") and fast in the rescue system. The green and red LEDs stay off.
+#
 # Screen: fbcon=map:1 on the command line keeps the console text off the
 # LCD. tsx-splash draws the boot splash on fb0 as soon as rockchip-drm has
 # made it. The rescue and the console profile (/etc/tsx/profile is
@@ -43,6 +46,17 @@ msg() {
 	echo "uc-pxx-initramfs: $*" > /dev/kmsg 2>/dev/null
 	echo "uc-pxx-initramfs: $*" >> "$LOG"
 }
+
+# The blue status LED blinks from the LED probe (the device tree gives it the
+# trigger "timer"). Set the slow blink of the boot (500 ms on, 1500 ms off), the
+# timing of uc-pxx-leds. The rescue blinks fast (250 ms on, 250 ms off).
+# A kernel without the trigger has no delay_on, and nothing happens.
+led_blue() {
+	[ -w /sys/class/leds/blue/delay_on ] || return 0
+	echo "$1" > /sys/class/leds/blue/delay_on
+	echo "$2" > /sys/class/leds/blue/delay_off
+}
+led_blue 500 1500
 
 # The boot splash. An initramfs without tsx-splash has none.
 SPLASH=/usr/sbin/tsx-splash
@@ -66,6 +80,7 @@ text_console() {
 
 rescue() {
 	text_console
+	led_blue 250 250
 	msg "RESCUE: $*"
 	echo "$*" > /run/uc-pxx-rescue-reason
 	# the shared rescue tools (tsx-rescue-status) read this name
@@ -91,6 +106,7 @@ i=0
 while [ ! -e /dev/fb0 ] && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
 [ -e /dev/fb0 ] || msg "no fb0 after 3 s: the splash comes later or not at all"
 splash
+
 [ -n "$want_rescue" ] && rescue "uc-pxx.rescue is on the kernel command line"
 
 # part_by_name NAME: the block device of the eMMC partition with that GPT name

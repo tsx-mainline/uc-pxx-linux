@@ -33,10 +33,13 @@ echo "== the daemon is the only writer =="
 # The scripts that the A/B boot control owns write the red LED as an alarm.
 # Nothing else may write an LED class device.
 hits=$(cd "$REPO" && grep -rIl '/sys/class/leds' rootfs tools kernel ci 2>/dev/null \
-	| grep -v -e '^rootfs/tests/' -e 'uc-pxx-arm-slot$' -e 'uc-pxx-mark-boot.sh$' -e 'uc-pxx-flash-boot$' || true)
+	| grep -v -e '^rootfs/tests/' -e 'uc-pxx-arm-slot$' -e '^rootfs/initramfs/overlay/init$' -e 'uc-pxx-mark-boot.sh$' -e 'uc-pxx-flash-boot$' || true)
 eq "$hits" "" "no other file of the repository names /sys/class/leds"
 if (cd "$REPO" && grep -n '/sys/class/leds' rootfs/overlay/usr/sbin/uc-pxx-arm-slot rootfs/overlay/etc/uc-pxx-mark-boot.sh rootfs/overlay/usr/sbin/uc-pxx-flash-boot 2>/dev/null \
 	| grep -v '/sys/class/leds/red/brightness'); then bad "a boot-control script writes an LED other than red"; else ok "the boot-control scripts write only the red LED"; fi
+# /init of the initramfs sets the timing of the blue boot blink, before the daemon runs
+w=$(grep -n '/sys/class/leds' "$REPO/rootfs/initramfs/overlay/init" | grep -v -e '/sys/class/leds/blue/delay_on' -e '/sys/class/leds/blue/delay_off' || true)
+eq "$w" "" "/init names only blue/delay_on and blue/delay_off"
 [ ! -e "$REPO/rootfs/overlay/usr/local/sbin/uc-pxx-status-led" ] && [ ! -e "$REPO/rootfs/overlay/etc/init.d/uc-pxx-status-led" ] \
 	&& ok "uc-pxx-status-led is gone (the daemon shows the boot state)" || bad "uc-pxx-status-led is still in the overlay"
 grep -rq 'uc-pxx-status-led' "$REPO/rootfs/profiles" && bad "a profile still starts uc-pxx-status-led" || ok "no profile starts uc-pxx-status-led"

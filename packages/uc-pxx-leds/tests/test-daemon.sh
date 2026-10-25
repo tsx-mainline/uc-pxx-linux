@@ -137,5 +137,37 @@ sleep 0.5; eq "$(sed -n 's/^teams //p' "$T/state")" "on" "the saved state plays 
 kill -TERM $BG; wait $BG; BG=
 python3 -I -B "$PROG" bogus 2>/dev/null; eq "$?" "2" "a wrong argument: exit 2"
 
+echo "== a blue blink that the kernel and /init started is not restarted =="
+# trigger_file: the content shows which trigger is selected. The daemon writes
+# only the name, so a changed file means that the daemon wrote the trigger.
+mkblue() { # DELAY_OFF
+	rm -rf "$T/leds2"; mkdir -p "$T/leds2"
+	for l in teams_white mute_headset mute_speaker mute_red red green blue; do
+		mkdir -p "$T/leds2/$l"; echo 0 > "$T/leds2/$l/brightness"; echo "none [timer] heartbeat" > "$T/leds2/$l/trigger"
+	done
+	echo 500 > "$T/leds2/blue/delay_on"; echo "$1" > "$T/leds2/blue/delay_off"
+	rm -f "$T/run/sock" "$T/kiosk.ready"
+}
+runblue() {
+	env -i PATH="$PATH" $ENVV UC_PXX_LEDS="$T/leds2" UC_PXX_READY_SOURCE=kiosk UC_PXX_KIOSK_READY="$T/kiosk.ready" python3 -I -B "$PROG" 2>> "$T/daemon.log" &
+	BG=$!
+	i=0; while [ ! -S "$T/run/sock" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+	sleep 0.6
+}
+mkblue 1500; runblue
+eq "$(cat "$T/leds2/blue/trigger")" "none [timer] heartbeat" "same timer and delays: the trigger is not written again"
+eq "$(cat "$T/leds2/blue/delay_off")" "1500" "and the delays are not written again"
+eq "$(cat "$T/leds2/green/trigger")" "none" "the other LEDs are set as before (green: no trigger)"
+eq "$(cat "$T/leds2/red/brightness")" "0" "red stays off"
+# when the system is READY the daemon goes on as before: green, no blink
+: > "$T/kiosk.ready"; sleep 2.6
+eq "$(cat "$T/leds2/green/brightness")" "1" "READY: green on as before"
+eq "$(cat "$T/leds2/blue/trigger")" "none" "READY: the blue blink ends"
+kill -TERM $BG; wait $BG; BG=
+mkblue 1000; runblue
+eq "$(cat "$T/leds2/blue/trigger")" "timer" "other delays: the daemon sets the trigger"
+eq "$(cat "$T/leds2/blue/delay_off")" "1500" "and the boot timing"
+kill -TERM $BG; wait $BG; BG=
+
 echo "$N passed, $F failed"
 [ "$F" = 0 ]
