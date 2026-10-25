@@ -72,6 +72,15 @@ size come from the boot image header) and gives the file to
 `kernel/mkimage.sh --resource`. So no vendor file ships. This installer
 step is not written yet.
 
+With the stock resource, U-Boot leaves the VOP scanning the logo when it
+starts the kernel. U-Boot decodes the logo into the display pool of its
+`rockchip_display` driver: 32 MiB at the top of RAM, `0xf5f00000` to
+`0xf7f00000`. The device tree reserves this pool (`no-map`), so the kernel
+does not write over the logo. The logo stays on the screen until
+`rockchip-drm` binds at about 2.8 s and resets the VOP. A
+`simple-framebuffer` does not fit: U-Boot shows the logo as a centered,
+mirrored 800x1280 window, and `rockchip-drm` binds before user space starts.
+
 The build token is the same string in two places: the name field of the boot
 image header, and the word `uc-pxx.id=TOKEN` that `kernel/mkimage.sh` adds to
 `/chosen/bootargs` of the embedded device tree. The boot-marking hook reads
@@ -165,6 +174,10 @@ framebuffer that does not exist, so no console text reaches the LCD.
 3. The splash stays on the screen until the compositor of the kiosk takes the
    display.
 
+Between the reset of the VOP and the first frame of the splash (about 1 s),
+the LCD gets no picture. The first `tsx-splash show` sets the mode, so the
+panel starts again with a black frame, and the splash follows.
+
 The panel is 1200x1920 and is mounted turned (`fbcon=rotate:3`). `tsx-splash`
 reads this number from the command line and turns the landscape frame onto
 the panel. It draws the largest image that fits, centered on black. `/init`
@@ -175,6 +188,14 @@ next to the images of the package. `splash/mksplash.sh` of tsx-linux-common
 renders these sizes at build time, because the package does not have them.
 The build finds the checkout in `TSX_COMMON`, or next to this repository.
 Without it the UC-P10 shows the 1280x800 image, centered on black.
+
+`rockchip-drm` gives `fb0` a shadow buffer in system memory. The kernel
+copies the changed lines to the scanout buffer. `tsx-splash` writes one line
+per `write()`. Kernel 6.18 computed a clip of zero width for a write that
+ends at the end of a line, so the full-screen `show` never reached the
+screen, and only the status band was visible. The kernel carries the
+upstream fix "drm/fb-helper: Fix clipping when damage area spans a single
+scanline".
 
 The rescue system and the console profile (`/etc/tsx/profile` is `console`,
 with a login on `tty1`) get the text console back first: `tsx-splash

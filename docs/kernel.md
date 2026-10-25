@@ -11,7 +11,7 @@ the boot image.
 | LTS (default) | `uc-pxx-lts` | `v6.18.54` |
 
 `kernel/KERNEL_REV.lts` pins one revision of the branch: the 40 digit commit
-`56b45703919d7ac78bf4167a593f8934cd5f9c18`. `ci/build-kernel.sh` fetches that
+`17418579cbd9e2b53117fcf84cf00f820dcbc137`. `ci/build-kernel.sh` fetches that
 commit and stops if the checkout differs from it.
 
 A stable flavor (`uc-pxx-stable`, v7.2) comes later. Develop on stable first
@@ -25,7 +25,7 @@ prefix `crestron`). The names of the drivers do not have a model prefix:
 
 | Part | Content |
 |---|---|
-| Display | The shared board file `rk3399-crestron-uc-pxx.dtsi`, the Himax panel driver `panel-crestron-uc-p10.c` (`DRM_PANEL_CRESTRON_UC_P10`) and the ILI9881C panel of the UC-P8. `fbcon=map:1` keeps the console off the LCD for the boot splash, `vt.global_cursor_default=0` hides its cursor, and the kernel has no boot logo |
+| Display | The shared board file `rk3399-crestron-uc-pxx.dtsi`, the Himax panel driver `panel-crestron-uc-p10.c` (`DRM_PANEL_CRESTRON_UC_P10`) and the ILI9881C panel of the UC-P8. `fbcon=map:1` keeps the console off the LCD for the boot splash, `vt.global_cursor_default=0` hides its cursor, and the kernel has no boot logo. The device tree reserves the display pool of U-Boot (`0xf5f00000`, 32 MiB), so the U-Boot logo stays intact until `rockchip-drm` binds ([boot.md](boot.md) "The boot image") |
 | Network | GMAC fixed link, the RTL8364B management driver `realtek-rtl8364b-smi.c` (`REALTEK_RTL8364B_SMI`, compatible `realtek,rtl8364b-smi`), fusb302 and USB-C role switch |
 | Hardware | PMIC and rails, CPU and GPU frequency tables, thermal, io-domains, touch with the six keys, Wi-Fi, Bluetooth, audio, LEDs, keys, SARADC, light sensor |
 | Audio | TAS5825M codec driver (it probes without its sequence file and without the amplifier, so the AIC3104 path still works) and a refcount fix in audio-graph-card2 |
