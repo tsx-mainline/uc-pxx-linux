@@ -6,10 +6,17 @@
  *   priority untouched. Refuses unless the booted slot is the expected one AND currently bootable, and
  *   (with --token) unless boot_a holds the very image that is running (so a `fastboot boot` RAM boot can
  *   never bless whatever happens to be in boot_a).
- * arm-trying: re-arm slot A to "trying" {15,7,0} before flashing boot_a, so a bad new image runs down
- *   its tries and U-Boot falls back to slot B. Requires slot B successful (priority 1..14) and leaves it
- *   byte-identical.
- * Slot B's bytes are never modified by either command.
+ * arm-trying --slot T: set the target slot T to "trying" {15,7,0} before its partitions change, so a bad
+ *   new image runs down its tries and U-Boot falls back to the other slot, the keeper K. Requires K
+ *   successful with priority 1..14 and leaves K byte-identical. The target then has a strictly higher
+ *   priority than K, so the choice never depends on a tie rule (the miniloader's tie rule is unproven).
+ *   --lower-keeper: also accept a keeper with priority 15, and lower that one byte to 14. Nothing else
+ *   of the keeper changes. Without the flag, --slot a behaves exactly as the reviewed slot-A-only tool.
+ * disable --slot T: set the target slot T to unbootable {0,0,0} (libavb slot_set_unbootable), for an
+ *   installer that writes T's partitions: while T is disabled, a power loss boots K. Requires K
+ *   successful and leaves K byte-identical.
+ * mark-successful never changes the other slot. arm-trying and disable never change the keeper, except
+ * the one priority byte that --lower-keeper names.
  *
  * AvbABData = first 32 bytes of eMMC LBA 49156 (misc partition start 49152 + 4):
  *   0..3 magic "\0AB0" | 4 version_major (1) | 5 version_minor | 6..7 reserved
@@ -21,7 +28,8 @@
  * Usage:
  *   uc-pxx-bootctl status            [--file PATH]
  *   uc-pxx-bootctl mark-successful   --expect a|b [--token TOKEN] [--dry-run] [--file PATH]
- *   uc-pxx-bootctl arm-trying        --slot a [--dry-run] [--file PATH]
+ *   uc-pxx-bootctl arm-trying        --slot a|b [--lower-keeper] [--dry-run] [--file PATH]
+ *   uc-pxx-bootctl disable           --slot a|b [--dry-run] [--file PATH]
  * --file operates on a 512-byte sector image instead of the eMMC (testing; skips device checks;
  *   --token is then compared against the file given by --boot-file, default none = refuse).
  * Exit: 0 = done / nothing to do
@@ -347,22 +355,49 @@ static int only_target_changed(const uint8_t *cur, const uint8_t *next, int slot
 	return 1;
 }
 
+/* a keeper (fallback) slot: successful {prio >= 1, tries 0, succ 1} */
+static int slot_successful(const uint8_t *s)
+{
+	return s[2] == 1 && s[1] == 0 && s[0] >= 1;
+}
+
+/*
+ * post-check for arm-trying and disable: only the priority, tries and successful bytes of the target
+ * slot, the CRC, and (when keeper_prio) the keeper's priority byte may differ
+ */
+static int only_target_and_keeper_prio_changed(const uint8_t *cur, const uint8_t *next, int target,
+					       int keeper_prio)
+{
+	int t = 8 + 4 * target, k = 8 + 4 * !target;
+
+	for (int i = 0; i < SECTOR; i++) {
+		int allowed = (i >= t && i <= t + 2) || (i >= 28 && i <= 31) || (keeper_prio && i == k);
+
+		if (next[i] != cur[i] && !allowed)
+			return 0;
+	}
+	return 1;
+}
+
 static int usage(void)
 {
 	fprintf(stderr, "usage: uc-pxx-bootctl status | mark-successful --expect a|b [--token T] | "
-		"arm-trying --slot a   [--dry-run] [--file PATH [--boot-file PATH]]\n");
+		"arm-trying --slot a|b [--lower-keeper] | disable --slot a|b   "
+		"[--dry-run] [--file PATH [--boot-file PATH]]\n");
 	return RC_REFUSED;
 }
 
 int main(int argc, char **argv)
 {
 	const char *cmd = argc > 1 ? argv[1] : "", *token = NULL, *why;
-	int expect = -1, arm_slot = -1, dry = 0, picked, mark, arm;
+	int expect = -1, slot = -1, dry = 0, lower = 0, lowered = 0, picked, mark, arm, dis;
 	uint8_t cur[SECTOR], next[SECTOR];
 
 	for (int i = 2; i < argc; i++) {
 		if (!strcmp(argv[i], "--dry-run"))
 			dry = 1;
+		else if (!strcmp(argv[i], "--lower-keeper"))
+			lower = 1;
 		else if (!strcmp(argv[i], "--file") && i + 1 < argc)
 			file_path = argv[++i];
 		else if (!strcmp(argv[i], "--boot-file") && i + 1 < argc)
@@ -374,13 +409,16 @@ int main(int argc, char **argv)
 			expect = !strcmp(argv[i], "a") ? 0 : !strcmp(argv[i], "b") ? 1 : -1;
 		} else if (!strcmp(argv[i], "--slot") && i + 1 < argc) {
 			i++;
-			arm_slot = !strcmp(argv[i], "a") ? 0 : -1;
+			slot = !strcmp(argv[i], "a") ? 0 : !strcmp(argv[i], "b") ? 1 : -1;
 		} else
 			return usage();
 	}
 	mark = !strcmp(cmd, "mark-successful");
 	arm = !strcmp(cmd, "arm-trying");
-	if (!mark && !arm && strcmp(cmd, "status"))
+	dis = !strcmp(cmd, "disable");
+	if (!mark && !arm && !dis && strcmp(cmd, "status"))
+		return usage();
+	if (lower && !arm)
 		return usage();
 
 	if (!file_path && (why = check_device(mark && token))) {
@@ -398,7 +436,7 @@ int main(int argc, char **argv)
 	picked = libavb_pick(cur);
 	describe("current", cur);
 
-	if (!mark && !arm) {
+	if (!mark && !arm && !dis) {
 		printf("libavb-would-boot: %c\n", picked < 0 ? '-' : "ab"[picked]);
 		return RC_OK;
 	}
@@ -435,23 +473,45 @@ int main(int argc, char **argv)
 		next[8 + 4 * expect + 1] = 0;  /* tries_remaining */
 		next[8 + 4 * expect + 2] = 1;  /* successful_boot */
 	} else {
-		const uint8_t *b = cur + 12;
+		const uint8_t *ts, *ks;
+		int t = 8 + 4 * slot, k = 8 + 4 * !slot;
 
-		if (arm_slot != 0) {
-			logmsg("refusing: only --slot a is supported");
+		if (slot < 0) {
+			logmsg("refusing: --slot a|b is required");
 			return RC_REFUSED;
 		}
-		if (!(b[2] == 1 && b[1] == 0 && b[0] >= 1 && b[0] <= 14)) {
-			logmsg("refusing: slot B must be successful with priority 1..14 to stay the fallback");
+		ts = cur + t;
+		ks = cur + k;
+		if (!slot_successful(ks)) {
+			logmsg("refusing: slot %c must be successful to stay the fallback", "ab"[!slot]);
 			return RC_REFUSED;
 		}
-		if (cur[8] == 15 && cur[9] == 7 && cur[10] == 0) {
-			logmsg("slot a already armed trying {15,7,0}, nothing to do");
-			return RC_OK;
+		if (arm) {
+			if (ks[0] == 15 && !lower) {
+				logmsg("refusing: slot %c must be successful with priority 1..14 to stay the fallback "
+				       "(--lower-keeper lowers 15 to 14)", "ab"[!slot]);
+				return RC_REFUSED;
+			}
+			if (ts[0] == 15 && ts[1] == 7 && ts[2] == 0 && ks[0] <= 14) {
+				logmsg("slot %c already armed trying {15,7,0}, nothing to do", "ab"[slot]);
+				return RC_OK;
+			}
+			next[t] = 15;      /* priority strictly above the keeper, so the target is tried first */
+			next[t + 1] = 7;   /* tries_remaining */
+			next[t + 2] = 0;   /* successful_boot */
+			if (ks[0] == 15) { /* only with --lower-keeper (refused above otherwise) */
+				next[k] = 14;
+				lowered = 1;
+			}
+		} else {
+			if (ts[0] == 0 && ts[1] == 0 && ts[2] == 0) {
+				logmsg("slot %c already disabled {0,0,0}, nothing to do", "ab"[slot]);
+				return RC_OK;
+			}
+			next[t] = 0;       /* priority 0: libavb never picks it */
+			next[t + 1] = 0;   /* tries_remaining */
+			next[t + 2] = 0;   /* successful_boot */
 		}
-		next[8] = 15;  /* priority above B so A is tried first */
-		next[9] = 7;   /* tries_remaining */
-		next[10] = 0;  /* successful_boot */
 	}
 	put_be32(next + 28, crc32_ieee(next, 28));
 
@@ -460,13 +520,35 @@ int main(int argc, char **argv)
 		logmsg("internal error, new state invalid: %s", why);
 		return RC_REFUSED;
 	}
-	if (!only_target_changed(cur, next, mark ? expect : 0, arm)) {
-		logmsg("internal error, a byte outside the target slot/crc would change");
-		return RC_REFUSED;
-	}
-	if (!slot_bootable(next + 12) && !(mark && expect == 0 && slot_bootable(next + 8))) {
-		logmsg("internal error, slot B would not stay bootable");
-		return RC_REFUSED;
+	if (mark) {
+		if (!only_target_changed(cur, next, expect, 0)) {
+			logmsg("internal error, a byte outside the target slot/crc would change");
+			return RC_REFUSED;
+		}
+		if (!slot_bootable(next + 12) && !(expect == 0 && slot_bootable(next + 8))) {
+			logmsg("internal error, slot B would not stay bootable");
+			return RC_REFUSED;
+		}
+	} else {
+		const uint8_t *ck = cur + 8 + 4 * !slot, *nk = next + 8 + 4 * !slot;
+
+		if (!only_target_and_keeper_prio_changed(cur, next, slot, lowered)) {
+			logmsg("internal error, a byte outside the target slot/crc would change");
+			return RC_REFUSED;
+		}
+		if (!slot_successful(nk) || nk[1] != ck[1] || nk[2] != ck[2] || nk[3] != ck[3] ||
+		    nk[0] != (lowered ? 14 : ck[0])) {
+			logmsg("internal error, slot %c would not stay the same successful fallback", "ab"[!slot]);
+			return RC_REFUSED;
+		}
+		if (libavb_pick(next) != (arm ? slot : !slot)) {
+			logmsg("internal error, libavb would not boot slot %c next", "ab"[arm ? slot : !slot]);
+			return RC_REFUSED;
+		}
+		if (arm && next[8 + 4 * slot] <= nk[0]) {
+			logmsg("internal error, target priority is not strictly above the keeper");
+			return RC_REFUSED;
+		}
 	}
 	describe(dry ? "would write" : "writing", next);
 	if (dry)
@@ -474,8 +556,13 @@ int main(int argc, char **argv)
 
 	switch (commit(cur, next)) {
 	case RC_OK:
-		logmsg(mark ? "slot %c marked successful (verified by read-back)"
-			    : "slot %c armed trying {15,7,0} (verified by read-back)", "ab"[mark ? expect : 0]);
+		if (mark)
+			logmsg("slot %c marked successful (verified by read-back)", "ab"[expect]);
+		else if (arm)
+			logmsg("slot %c armed trying {15,7,0}%s (verified by read-back)", "ab"[slot],
+			       lowered ? ", keeper priority 15 -> 14" : "");
+		else
+			logmsg("slot %c disabled {0,0,0} (verified by read-back)", "ab"[slot]);
 		return RC_OK;
 	case RC_IO_UNCHANGED:
 		return RC_IO_UNCHANGED;

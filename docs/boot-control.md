@@ -32,8 +32,12 @@ test"). The package `uc-pxx-boot-tools` must install it.
 ```
 uc-pxx-bootctl status
 uc-pxx-bootctl mark-successful --expect a --token TOKEN
-uc-pxx-bootctl arm-trying --slot a
+uc-pxx-bootctl arm-trying --slot a|b [--lower-keeper]
+uc-pxx-bootctl disable --slot a|b
 ```
+
+In this list, the target is the slot that `--slot` names. The keeper is the
+other slot, the fallback.
 
 - `status` prints the state of both slots and changes nothing.
 - `mark-successful` sets the booted slot to "successful" (tries 0,
@@ -41,9 +45,22 @@ uc-pxx-bootctl arm-trying --slot a
   can boot. With `--token` it also refuses unless the build token in the
   header of `boot_a` equals the token. So a RAM boot never marks the image
   that is in `boot_a`.
-- `arm-trying` sets slot A to "trying" (priority 15, tries 7, successful 0).
-  It requires slot B to be "successful" with priority 1 to 14.
-- No command changes the bytes of slot B.
+- `arm-trying` sets the target to "trying" (priority 15, tries 7,
+  successful 0). It requires the keeper to be "successful" with priority 1 to
+  14. The target then has a higher priority than the keeper, so the choice
+  never depends on what the boot loader does when two priorities are equal.
+- `--lower-keeper` (only with `arm-trying`) also accepts a keeper with
+  priority 15, and sets that one byte to 14. The tries and the successful
+  flag of the keeper do not change.
+- `disable` sets the target to "unbootable" (priority 0, tries 0,
+  successful 0). It requires the keeper to be "successful" with priority 1
+  or more. The firmware
+  installer uses it while it writes the partitions of the target: if the
+  power fails, U-Boot starts the keeper.
+- `mark-successful` never changes the bytes of the other slot. `arm-trying`
+  and `disable` never change the bytes of the keeper, except the priority
+  byte that `--lower-keeper` names. Without the new options, `arm-trying
+  --slot a` does exactly what the reviewed tool did.
 - Every write checks the metadata first (magic, version, reserved bytes,
   big-endian CRC, legal slot states, at least one slot bootable). The tool
   keeps a copy of the sector and reads it back after the write.
@@ -195,4 +212,6 @@ checksums before they write the metadata sector on a panel.
 - Every change to `system_a` or `boot_a` must arm slot A first.
 - The hook must not run while the flash wrapper runs.
 - The hook must not mark a boot after a kernel oops.
-- Phase 2 needs the tool for both slots. See [boot.md](boot.md).
+- `arm-trying` and `disable` now take both slots. `mark-successful --expect b`
+  still compares the token with `boot_a`, so it refuses for slot B. Fix that
+  before Phase 2 relies on the tool to mark slot B. See [boot.md](boot.md).

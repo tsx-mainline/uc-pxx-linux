@@ -87,6 +87,40 @@ def expect_arm(before, rc, after):
     return good, "A->{15,7,0}, B untouched, A boots next"
 
 
+def successful(s):   # a keeper: successful with a priority libavb can pick
+    return s[2] == 1 and s[1] == 0 and s[0] >= 1
+
+
+def expect_arm_any(before, rc, after, slot, lower):
+    """arm-trying --slot T [--lower-keeper]: T -> {15,7,0}; the keeper K must be successful, priority 1..14
+    (1..15 with --lower-keeper, and 15 becomes 14). Nothing else changes; T boots next, above K."""
+    t, k = 8 + 4 * slot, 8 + 4 * (1 - slot)
+    K = before[k:k + 4]
+    if not valid(before) or not successful(K) or (K[0] == 15 and not lower):
+        return rc == 1 and after == before, "refuse, untouched (invalid / keeper not a successful fallback)"
+    want_k = bytes([14 if K[0] == 15 else K[0]]) + K[1:]
+    if before[t:t + 3] == bytes([15, 7, 0]) and K[0] <= 14:
+        return rc == 0 and after == before, "already armed: no change"
+    allowed = {t, t + 1, t + 2, 28, 29, 30, 31} | ({k} if K[0] == 15 else set())
+    good = (rc == 0 and valid(after) and after[t:t + 4] == bytes([15, 7, 0, 0]) and after[k:k + 4] == want_k
+            and pick(after) == slot and after[t] > after[k] and only_changed(before, after, allowed))
+    return good, "%s->{15,7,0}, keeper %s%s, %s boots next" % (
+        "AB"[slot], "AB"[1 - slot], " 15->14" if K[0] == 15 else " untouched", "AB"[slot])
+
+
+def expect_disable(before, rc, after, slot):
+    """disable --slot T: T -> {0,0,0}; the keeper K must be successful and stays byte-identical; K boots next."""
+    t, k = 8 + 4 * slot, 8 + 4 * (1 - slot)
+    K = before[k:k + 4]
+    if not valid(before) or not successful(K):
+        return rc == 1 and after == before, "refuse, untouched (invalid / keeper not successful)"
+    if before[t:t + 3] == bytes(3):
+        return rc == 0 and after == before, "already disabled: no change"
+    good = (rc == 0 and valid(after) and after[t:t + 4] == bytes(4) and after[k:k + 4] == K
+            and pick(after) == 1 - slot and only_changed(before, after, {t, t + 1, t + 2, 28, 29, 30, 31}))
+    return good, "%s->{0,0,0}, keeper %s untouched and boots next" % ("AB"[slot], "AB"[1 - slot])
+
+
 fails = 0
 seen, files = set(), []
 for r in ROOTS:
@@ -127,8 +161,28 @@ def check(name, s):
           f"A{tuple(after[8:11])} B{tuple(after[12:15])}  [{rule}]")
     if not ok:
         print("     stderr:", err)
+    for slot in (0, 1):
+        for lower in (False, True):
+            args = ["arm-trying", "--slot", "ab"[slot]] + (["--lower-keeper"] if lower else [])
+            rc, after, err = run(s, *args)
+            ok, rule = expect_arm_any(s, rc, after, slot, lower)
+            fails += not ok
+            label = "arm %s%s" % ("ab"[slot], "+L" if lower else "")
+            print(f"{'PASS' if ok else 'FAIL'} {label:6s}{name:38s} A{tuple(s[8:11])} B{tuple(s[12:15])} rc={rc} -> "
+                  f"A{tuple(after[8:11])} B{tuple(after[12:15])}  [{rule}]")
+            if not ok:
+                print("     stderr:", err)
+        rc, after, err = run(s, "disable", "--slot", "ab"[slot])
+        ok, rule = expect_disable(s, rc, after, slot)
+        fails += not ok
+        print(f"{'PASS' if ok else 'FAIL'} dis {'ab'[slot]} {name:38s} A{tuple(s[8:11])} B{tuple(s[12:15])} rc={rc} -> "
+              f"A{tuple(after[8:11])} B{tuple(after[12:15])}  [{rule}]")
+        if not ok:
+            print("     stderr:", err)
     for args in (["mark-successful", "--expect", "a", "--token", TOKEN, "--dry-run"],
-                 ["arm-trying", "--slot", "a", "--dry-run"], ["status"]):
+                 ["arm-trying", "--slot", "a", "--dry-run"], ["status"],
+                 ["arm-trying", "--slot", "b", "--lower-keeper", "--dry-run"],
+                 ["disable", "--slot", "a", "--dry-run"], ["disable", "--slot", "b", "--dry-run"]):
         rc, after, _ = run(s, *args, boot=good_boot)
         if after != s:
             print(f"FAIL {args[0]} dry-run/status modified {name}"); fails += 1
@@ -183,14 +237,33 @@ synth = {
     "B trying (arm refuse)": mk(A=[15, 0, 1, 0], B=[14, 3, 0, 0]),
     "B prio 15 succ (arm refuse)": mk(A=[14, 0, 1, 0], B=[15, 0, 1, 0]),
     "B unbootable (arm refuse)": mk(A=[15, 0, 1, 0], B=[0, 0, 0, 0]),
+    # both-slot installer cases
+    "A succ 15, B succ 14 (B target needs L)": mk(A=[15, 0, 1, 0], B=[14, 0, 1, 0]),
+    "A succ 14, B succ 15 (A target needs L)": mk(A=[14, 0, 1, 0], B=[15, 0, 1, 0]),
+    "both succ 15 (tie)": mk(A=[15, 0, 1, 0], B=[15, 0, 1, 0]),
+    "A succ 1, B succ 1": mk(A=[1, 0, 1, 0], B=[1, 0, 1, 0]),
+    "A succ prio 0, B succ (A no keeper)": mk(A=[0, 0, 1, 0], B=[14, 0, 1, 0]),
+    "both trying": mk(A=[15, 3, 0, 0], B=[14, 2, 0, 0]),
+    "B trying 15/7, A succ 14": mk(A=[14, 0, 1, 0], B=[15, 7, 0, 0]),
+    "A prio 0 tries 3 (unbootable), B succ": mk(A=[0, 3, 0, 0], B=[14, 0, 1, 0]),
+    "A disabled, B succ 15": mk(A=[0, 0, 0, 0], B=[15, 0, 1, 0]),
+    "B disabled, A succ 15": mk(A=[15, 0, 1, 0], B=[0, 0, 0, 0]),
+    "B exhausted {15,0,0}, A succ 14": mk(A=[14, 0, 1, 0], B=[15, 0, 0, 0]),
+    "A succ 15 slot-reserved set": mk(A=[15, 0, 1, 1], B=[14, 0, 1, 0]),
 }
 for name, s in synth.items():
     check("synthetic: " + name, s)
 
 for args, label in ((["mark-successful", "--expect", "b", "--token", TOKEN], "--expect b on A-trying"),
                     (["mark-successful", "--token", TOKEN], "missing --expect"),
-                    (["arm-trying", "--slot", "b"], "arm --slot b"),
+                    (["arm-trying", "--slot", "b"], "arm --slot b while A is trying (no keeper)"),
                     (["arm-trying"], "arm without --slot"),
+                    (["arm-trying", "--slot", "c"], "arm --slot c"),
+                    (["disable"], "disable without --slot"),
+                    (["disable", "--slot", "b", "--lower-keeper"], "--lower-keeper with disable"),
+                    (["status", "--lower-keeper"], "--lower-keeper with status"),
+                    (["mark-successful", "--expect", "a", "--token", TOKEN, "--lower-keeper"],
+                     "--lower-keeper with mark-successful"),
                     (["bogus"], "unknown command")):
     rc, after, _ = run(base, *args, boot=bootimg(TOKEN))
     ok = rc == 1 and after == base
