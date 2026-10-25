@@ -136,16 +136,67 @@ command line. The boot-marking hook of the root file system reads it.
 `/init` starts the rescue system when a step fails, when the kernel command
 line has `uc-pxx.rescue`, or when the root file system has the file
 `/etc/uc-pxx-force-rescue` (the script removes the file). The rescue system
-is busybox init. It runs from RAM and writes nothing to the eMMC.
+is busybox init. It runs from RAM. It writes nothing to the eMMC. Only a
+person who starts `uc-pxx-install-rootfs` or `tsx-data-restore` writes to
+`system_a`.
 
+The rescue uses the shared tools of tsx-linux-common (the package
+`tsx-rescue-ui`): `tsx-rescue-status`, `tsx-confont`, `tsx-rescue-backlight`,
+`tsx-rescue-login`, `tsx-data-backup` and `tsx-data-restore`. The board file
+`board.sh` is the file of the root file system. It gives the model (from the
+device tree) and the MAC address (from the `cfg` partition, bytes 6 to 11).
+
+- The rescue screen. `tsx-rescue-status loop` runs on `tty1`. It shows the
+  banner, the model, the kernel, eth0 (address, MAC, source of the MAC), the
+  host name, the reason of the rescue and the A/B state. The A/B state is
+  the output of `uc-pxx-bootctl status` (it reads the sector and changes
+  nothing). The screen shows a progress bar while `uc-pxx-install-rootfs`
+  runs. Enter on a USB keyboard opens a root shell on the screen.
+  `tsx-confont` loads the largest Terminus font that gives 80x25 cells. On
+  the turned panel (`fbcon=rotate:3`) the console is 1920x1200 and the font
+  is 16x32 (120x37 cells).
+- The backlight is set to `TSX_RESCUE_BACKLIGHT` percent (50).
 - A root shell on the serial console `ttyS2` (115200 baud). It needs no
   login.
-- In the background: the MAC address of eth0 from the `cfg` partition (read
-  only), the switch init with `rtl8363-init`, DHCP on eth0.
-- SSH with dropbear on port 22 with key login only, if the build had
-  `AUTHORIZED_KEYS`. Without a key, no SSH starts.
-- The reason is in `/run/uc-pxx-rescue-reason`. The log is
-  `/run/uc-pxx-rescue.log`.
+- In the background: the MAC address of eth0, the switch init with
+  `rtl8363-init`, DHCP on eth0.
+- SSH with dropbear on port 22. `tsx-rescue-login` chooses the login at each
+  rescue boot:
+  1. The login of the panel. It reads `data/tsx/panel.conf` and
+     `root/.ssh/authorized_keys` of the root file system (label `tsxroot`,
+     read only). The key of root becomes the key of the rescue. A
+     `ROOT_PASSWORD_HASH` in `panel.conf` becomes the password of root.
+  2. A one-time password, if the root file system has no key and no hash.
+     Only the rescue screen shows it. It is not in the log.
+  3. Test builds only: the password hash or the key that the build baked in
+     (`TSX_DEV_RESCUE_HASH`, `TSX_DEV_RESCUE_KEYS`).
+  A normal build has no root password and no key.
+- The reason is in `/run/rescue-reason` (a copy of
+  `/run/uc-pxx-rescue-reason`). The log is `/run/uc-pxx-rescue.log`.
+
+The tools in the rescue:
+
+| Tool | Task |
+|---|---|
+| `uc-pxx-install-rootfs` | Writes a `rootfs.ext4` into `system_a` (`mmcblk0p22`, GPT name `system_a`). Nothing else |
+| `tsx-data-backup`, `tsx-data-restore` | Back up and restore the panel data. The unit has no data partition, so it works on the root file system (`/data`, `/root`, `/home`, `/var/lib/...`) |
+| `uc-pxx-bootctl status` | Shows the A/B state |
+
+`uc-pxx-install-rootfs` does a preflight first and stops at the first
+failed check: the partition is `mmcblk0p22`, on the eMMC, exactly 1792 MiB,
+not mounted, and slot B is successful with priority 1 to 14. It writes the
+image, reads it back and compares the sha256 value, checks the label
+`tsxroot`, runs `e2fsck` and grows the file system. The progress shows MiB,
+percent, rate and the time left. The rescue does not write `boot_a`, the A/B
+metadata (misc LBA 49156), the idbloader or the partition table. Write
+`boot_a` on the running system with `uc-pxx-flash-boot`.
+
+From a host, with the rescue address `<ip>`:
+
+```
+ssh root@<ip> uc-pxx-install-rootfs --check
+ssh root@<ip> uc-pxx-install-rootfs --size <bytes> <sha256> < rootfs.ext4
+```
 
 The rescue system never marks the boot as good. So slot A stays "trying".
 
@@ -156,9 +207,10 @@ failed try of slot A.
 Other options of the kernel command line: `uc-pxx.rootwait=N` (seconds,
 default 15) and `uc-pxx.init=PATH` (default `/sbin/init`).
 
-The build takes `RTL8363_INIT` (the tool of `tools/rtl8363-init`, built with
-the Realtek SDK) and `AUTHORIZED_KEYS` as files. This repository holds
-neither of them.
+The build takes the tools from a checkout of tsx-linux-common (`TSX_COMMON`),
+the reviewed `uc-pxx-bootctl` (`UC_PXX_BOOTCTL`, checked by its sha256) and
+`RTL8363_INIT` (the tool of `tools/rtl8363-init`, built with the Realtek SDK)
+as files. This repository holds none of them.
 
 ### The boot splash
 

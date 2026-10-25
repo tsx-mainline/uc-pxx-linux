@@ -2,15 +2,21 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # The rescue system of the uc-pxx boot initramfs (busybox init runs this
 # script once). It runs from RAM and writes nothing to the eMMC. It reads only
-# the six MAC bytes of the cfg partition.
+# the six MAC bytes of the cfg partition, and (read only) the login data of the
+# root file system. uc-pxx-install-rootfs and tsx-data-restore write to system_a
+# only when a person starts them.
 #
-# Steps, in the background, so the serial shell is ready at once:
-#   1. Set the MAC address of eth0 from the cfg partition (bytes 6 to 11).
-#   2. Start the RTL8364B switch (rtl8363-init init) while eth0 is down.
-#   3. Bring eth0 up and get an address with DHCP.
-#   4. Start dropbear on port 22 with key login only, when the image has an
-#      authorized_keys file (a test build). Without a key, no SSH starts.
-# The rescue never marks the boot as good. Slot A stays "trying", so the
+# Steps:
+#   1. Set the backlight (tsx-rescue-backlight, in the background).
+#   2. Choose the login (tsx-rescue-login): the root hash and the ssh key of
+#      the panel from the root file system, or a one-time password that only
+#      the rescue screen shows. Start dropbear (port 22) after it.
+#   3. In the background: set the MAC address of eth0 from the cfg partition
+#      (bytes 6 to 11, through board.sh), start the RTL8364B switch
+#      (rtl8363-init init) while eth0 is down, bring eth0 up and get an
+#      address with DHCP.
+# The rescue screen (tsx-rescue-status, started by inittab on tty1) shows the
+# result. The rescue never marks the boot as good. Slot A stays "trying", so the
 # unit falls back to slot B when the tries run out.
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 log() {
@@ -23,30 +29,47 @@ ip link set lo up
 log "rescue system: $(cat /run/uc-pxx-rescue-reason 2>/dev/null || echo 'no reason recorded')"
 log "shell on ttyS2 (115200). Log: /run/uc-pxx-initramfs.log, /run/uc-pxx-rescue.log"
 
-# cfg_mac: the factory MAC address (6 bytes at offset 6 of the partition cfg),
-# read only. It must be a globally administered unicast address.
-cfg_mac() {
-	for u in /sys/class/block/mmcblk*p*/uevent; do
-		grep -qx PARTNAME=cfg "$u" 2>/dev/null || continue
-		d=${u%/uevent}; d=/dev/${d##*/}
-		m=$(dd if="$d" bs=1 skip=6 count=6 2>/dev/null | od -An -tx1 | tr -s ' ' ':' | sed 's/^://;s/:$//')
-		case $m in ""|00:00:00:00:00:00|ff:ff:ff:ff:ff:ff) return 1;; esac
-		[ ${#m} -eq 17 ] || return 1
-		[ $((0x${m%%:*} & 3)) -eq 0 ] || return 1
-		echo "$m"; return 0
-	done
-	return 1
-}
+# The rescue has no tsx-idled. Set the backlight to a moderate level, so it
+# does not stay at the boot level.
+/usr/sbin/tsx-rescue-backlight > /dev/kmsg 2>&1 &
+
+# The board file: the MAC from the cfg partition, the model from the device tree.
+. /usr/local/lib/tsx/board.sh
+
+# The rescue has no fixed password. tsx-rescue-login uses the root hash and the
+# ssh key of the panel from the root file system, or makes a one-time password
+# that only the rescue screen shows. Dropbear starts after it, so there is no
+# moment with a login that nobody chose. The log line never has the password.
+# The root file system is on the eMMC already, so the script does not wait
+# for a data partition (the unit has none).
+TSX_RESCUE_WAIT=0 /usr/sbin/tsx-rescue-login
+log "rescue login: $(cat /run/tsx-rescue-login 2>/dev/null || echo failed)"
+mkdir -p /etc/dropbear
+case $(cat /run/tsx-rescue-login 2>/dev/null) in
+none|"") log "no login: dropbear does not start" ;;
+*) dropbear -R -E -p 22 -P /run/dropbear.pid 2>> /run/uc-pxx-rescue.log &&
+	log "dropbear started on port 22" ;;
+esac
 
 net() {
 	i=0
 	while [ ! -d /sys/class/net/eth0 ] && [ $i -lt 40 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -d /sys/class/net/eth0 ] || { log "no eth0 (the GMAC driver did not probe)"; return 0; }
-	if mac=$(cfg_mac); then
-		ip link set eth0 address "$mac" && log "eth0 MAC from the cfg partition"
-	else
-		log "no valid MAC in the cfg partition, eth0 keeps $(cat /sys/class/net/eth0/address)"
+	if [ ! -d /sys/class/net/eth0 ]; then
+		log "no eth0 (the GMAC driver did not probe)"
+		echo "no eth0" > /run/tsx-eth0-mac-src
+		return 0
 	fi
+	# /run/tsx-eth0-mac-src tells the rescue screen that the MAC is final (the
+	# board's source name, or random). Until then it shows "starting".
+	macsrc=random
+	mac=$(tsx_board_mac_early)
+	if [ -z "$mac" ]; then
+		log "no valid MAC in the cfg partition, eth0 keeps $(cat /sys/class/net/eth0/address)"
+	elif ip link set eth0 address "$mac"; then
+		macsrc=$(tsx_board_mac_source)
+		log "eth0 MAC $mac (from $macsrc)"
+	fi
+	echo "$macsrc" > /run/tsx-eth0-mac-src
 	# The switch init needs eth0 down. The MAC reset of eth0 needs the RGMII
 	# clock of the switch.
 	i=0
@@ -67,14 +90,6 @@ net() {
 	a=$(ip -4 addr show dev eth0 | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -n 1)
 	if [ -z "$a" ]; then log "eth0 has no IPv4 address after 60 s"; return 0; fi
 	log "eth0 $a"
-	if [ -s /root/.ssh/authorized_keys ] && command -v dropbear > /dev/null; then
-		mkdir -p /etc/dropbear
-		# -s: no password logins. -R: make the host keys when needed.
-		dropbear -R -s -p 22 -P /run/dropbear.pid 2>> /run/uc-pxx-rescue.log &&
-			log "ssh: dropbear on $a:22, key login only"
-	else
-		log "no authorized_keys in this initramfs, no ssh"
-	fi
 }
 
 ( net ) &

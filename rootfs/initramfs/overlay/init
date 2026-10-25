@@ -4,8 +4,9 @@
 # Image (ci/build-kernel.sh --initramfs). This script finds the root file
 # system of slot A, checks it, grows it to fill system_a, mounts it and runs
 # switch_root into it. On any failure it starts the rescue system: busybox
-# init with a shell on the serial console (ttyS2, 115200) and, when the switch
-# init works, eth0 with DHCP and dropbear (key login only).
+# init with the rescue screen on the LCD (tsx-rescue-status), a shell on the
+# serial console (ttyS2, 115200) and, when the switch init works, eth0 with
+# DHCP and dropbear (the login of tsx-rescue-login).
 #
 # The root file system: the partition named system_a (GPT name) with an ext4
 # file system labeled tsxroot. If no partition has the name system_a, the
@@ -67,6 +68,8 @@ rescue() {
 	text_console
 	msg "RESCUE: $*"
 	echo "$*" > /run/uc-pxx-rescue-reason
+	# the shared rescue tools (tsx-rescue-status) read this name
+	cp /run/uc-pxx-rescue-reason /run/rescue-reason
 	mountpoint -q /newroot && umount /newroot 2>/dev/null
 	exec /sbin/init
 }

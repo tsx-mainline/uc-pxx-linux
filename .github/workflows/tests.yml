@@ -43,6 +43,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends busybox python3
       - name: rootfs/tests/test-profiles.sh - the package, service and image file lists of the console, kiosk and ha profiles
         run: sh rootfs/tests/test-profiles.sh
+      - name: rootfs/tests/test-rescue.sh - the rescue screen, console font and login with the tools of tsx-linux-common (SKIPPED without a checkout)
+        run: busybox sh rootfs/tests/test-rescue.sh
+      - name: rootfs/tests/test-install-rootfs.sh - uc-pxx-install-rootfs against a made-up /sys and /dev
+        run: busybox sh rootfs/tests/test-install-rootfs.sh
       - name: rootfs/tests/test-board.sh - the board file, the MAC address from the cfg partition and the model
         run: sh rootfs/tests/test-board.sh
       - name: rootfs/tests/test-hw.sh - tsx-hw facts and the layers of panel-board.d with a made-up /sys

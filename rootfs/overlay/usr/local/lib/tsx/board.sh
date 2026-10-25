@@ -61,7 +61,8 @@
 #   tsx_board_mac_early    the same, for early boot
 #   tsx_board_mac_source   TSX_MAC_SOURCE
 #   tsx_board_hostname_hint  the host name that the board suggests (none here)
-#   tsx_board_rescue_extra extra lines for the rescue screen (none yet)
+#   tsx_board_rescue_extra extra lines for the rescue screen: the host name,
+#                          the reason of the rescue and the A/B state
 #   tsx_board_ledbar_map MODEL  the name of the LED map for the USB LED bar
 #                          (none here)
 #   tsx_board_pre_update   the board hook of tsx-autoupdate. It runs after the
@@ -76,7 +77,7 @@
 #   tsx_board_probe DIR    point the data reader at the board data from the
 #                          rescue system. Always succeeds here.
 # Test hooks: TSX_CFG (the cfg partition or a file), TSX_SYSBLOCK, TSX_DEVDIR,
-# TSX_DT_COMPATIBLE.
+# TSX_DT_COMPATIBLE, TSX_RUN, TSX_BOOTCTL.
 
 TSX_FAMILY=${TSX_FAMILY:-uc-pxx}
 TSX_PKG_PREFIX=${TSX_PKG_PREFIX:-uc-pxx}
@@ -172,6 +173,39 @@ tsx_board_ledbar_map() { return 0; }
 # The board hook of tsx-autoupdate. The status of the function is the status
 # of uc-pxx-arm-slot: 0 armed and verified, 1 refused, 3 A/B state unknown.
 tsx_board_pre_update() { /usr/sbin/uc-pxx-arm-slot; }
-# TODO: show the boot slot and the A/B state on the rescue screen, after the
-# boot-control tool exists (docs/boot-control.md).
-tsx_board_rescue_extra() { return 0; }
+# The extra lines of the rescue screen (tsx-rescue-status calls this every
+# 2 s, set -u is on): the host name, why the rescue started, and the A/B state
+# from `uc-pxx-bootctl status`. The status command only reads the sector. The
+# result is kept in $RUN/uc-pxx-ab-state for 60 s, so the screen does not read
+# the eMMC and write to the kernel log at every redraw. Test hooks: TSX_RUN,
+# TSX_BOOTCTL.
+tsx_board_rescue_extra() {
+	_tb_run=${TSX_RUN:-/run}
+	_tb_h=$(hostname 2>/dev/null)
+	[ -z "$_tb_h" ] || echo "hostname     : $_tb_h"
+	# the reason, wrapped to 60 columns under its label
+	_tb_r=$(cat "$_tb_run/rescue-reason" 2>/dev/null)
+	if [ -n "$_tb_r" ]; then
+		printf '%s\n' "$_tb_r" | fold -s -w 60 | sed -e 's/ *$//' -e '1s/^/reason       : /' -e '2,$s/^/               /'
+	fi
+	_tb_bc=${TSX_BOOTCTL:-/usr/sbin/uc-pxx-bootctl}
+	[ -x "$_tb_bc" ] || return 0
+	_tb_f=$_tb_run/uc-pxx-ab-state
+	_tb_now=$(date +%s); _tb_mt=$(stat -c %Y "$_tb_f" 2>/dev/null || echo 0)
+	if [ "$_tb_now" -lt "$_tb_mt" ] || [ $((_tb_now - _tb_mt)) -gt 60 ]; then
+		_tb_o=$(timeout 10 "$_tb_bc" status 2>&1); _tb_rc=$?
+		{ echo "rc=$_tb_rc"; printf '%s\n' "$_tb_o"; } > "$_tb_f.new" 2>/dev/null && mv "$_tb_f.new" "$_tb_f"
+	fi
+	_tb_rc=$(sed -n 's/^rc=//p' "$_tb_f" 2>/dev/null)
+	_tb_cur=$(sed -n 's/^.*current: A{prio \([0-9]*\) tries \([0-9]*\) succ \([0-9]*\)} B{prio \([0-9]*\) tries \([0-9]*\) succ \([0-9]*\)}.*$/\1 \2 \3 \4 \5 \6/p' "$_tb_f" 2>/dev/null | head -n 1)
+	if [ "$_tb_rc" = 0 ] && [ -n "$_tb_cur" ]; then
+		set -- $_tb_cur
+		echo "slot A       : priority $1, tries $2, successful $3"
+		echo "slot B       : priority $4, tries $5, successful $6"
+		_tb_nb=$(sed -n 's/^libavb-would-boot: //p' "$_tb_f" | head -n 1 | tr 'a-z-' 'A-Z?')
+		[ -z "$_tb_nb" ] || echo "next boot    : slot $_tb_nb"
+	else
+		echo "A/B state    : cannot read (uc-pxx-bootctl status, exit ${_tb_rc:-?})"
+	fi
+	return 0
+}

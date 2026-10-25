@@ -1,0 +1,245 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# uc-pxx-install-rootfs: write a root file system image into system_a, from
+# the rescue system, as root.
+#
+#   uc-pxx-install-rootfs [--size BYTES] SHA256 [IMAGE]
+#   uc-pxx-install-rootfs --check
+#
+# IMAGE (default: standard input) is rootfs.ext4 from rootfs/build-rootfs.sh,
+# SHA256 its sha256 (out/rootfs.sha256). From a host, streaming it:
+#   ssh root@<rescue> uc-pxx-install-rootfs --size <bytes> <sha256> < rootfs.ext4
+# --size gives the length of the stream, so the progress shows percent and
+# the script stops at once when the stream has another length.
+# --check shows the preflight and stops. It writes nothing.
+#
+# The script writes one place: the partition whose GPT name is system_a
+# (mmcblk0p22, 1792 MiB). It never writes boot_a, the A/B metadata (misc), the
+# idbloader, the partition table or any other partition. Boot_a is written
+# on the running system with uc-pxx-flash-boot.
+#
+# Steps, each checked:
+#   1. Preflight, shown before anything is written:
+#      - the partition system_a is mmcblk0p22, on the eMMC, exactly 1792 MiB,
+#        and it is not mounted;
+#      - the A/B state (uc-pxx-bootctl status, read only): slot B must be
+#        successful with priority 1 to 14 and no tries left. So the unit has a
+#        slot that boots, whatever happens to system_a;
+#      - the image fits in system_a.
+#   2. The image is written into system_a and read back (sha256).
+#   3. Its file system must be ext4 with the label tsxroot. The script checks
+#      it (e2fsck) and grows it to fill system_a (resize2fs). If the growth
+#      fails, /init grows it at the next boot.
+# Then "reboot -f" starts the new system. The first boot of slot A with the new
+# root file system counts as a try. The boot-marking hook marks slot A after a
+# healthy boot.
+# Every long step prints its progress on standard error (the host shows it as
+# it comes): MiB, percent and rate for each write and read-back, and a line
+# with the elapsed time every TSX_HB_S seconds (default 10) for the other
+# long steps. The rescue screen shows the same step and a progress bar.
+# Test hooks: TSX_SYSBLOCK (/sys/class/block), TSX_DEVDIR (/dev), TSX_BOOTCTL
+# (uc-pxx-bootctl), TSX_MOUNTS (/proc/mounts), TSX_RUN (/run),
+# TSX_SYSTEM_A_SECTORS (3670016), TSX_TMP (/tmp).
+set -eu
+RUN=${TSX_RUN:-/run}
+TMP=${TSX_TMP:-/tmp}
+# The rescue screen (tsx-rescue-status) shows the step of a running write:
+# /run/tsx-op holds "PID NAME", /run/tsx-install-state the last message and
+# /run/tsx-progress the position of the long write. Only in a rescue
+# (tsx-rescue-login made /run/tsx-rescue-login), never on a host.
+op_note() {
+	[ -e "$RUN/tsx-rescue-login" ] || return 0
+	echo "$$ install-rootfs" > "$RUN/tsx-op" 2>/dev/null
+	echo "$1" > "$RUN/tsx-install-state" 2>/dev/null
+	return 0
+}
+say() { echo "uc-pxx-install-rootfs: $*" >&2; op_note "$*"; }
+die() { say "ERROR: $*"; exit 1; }
+SYSB=${TSX_SYSBLOCK:-/sys/class/block}
+DEVD=${TSX_DEVDIR:-/dev}
+BOOTCTL=${TSX_BOOTCTL:-/usr/sbin/uc-pxx-bootctl}
+MOUNTS=${TSX_MOUNTS:-/proc/mounts}
+SYSA_SECTORS=${TSX_SYSTEM_A_SECTORS:-3670016}
+SYSA_NAME=system_a SYSA_DEV=mmcblk0p22
+
+sha= img= size=0 next= check=0
+for a in "$@"; do
+	case "$next" in
+	size) size=$a; next=; continue;;
+	esac
+	case "$a" in
+	-h|--help) sed -n '2,44p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+	--size) next=size;;
+	--check) check=1;;
+	-*) die "unknown option $a (see --help)";;
+	*) if [ -z "$sha" ]; then sha=$a
+	   elif [ -z "$img" ]; then img=$a
+	   else die "unexpected argument $a"; fi;;
+	esac
+done
+[ -z "$next" ] || die "--size needs a number of bytes"
+case "$size" in ''|*[!0-9]*) die "--size is a number of bytes";; esac
+
+# ------------------------------------------------------------ progress ---
+HB=${TSX_HB_S:-10}
+[ "$HB" -ge 1 ] 2>/dev/null || HB=1
+# _pr_text NAME POS LEN DT: MiB, percent, rate and time left, in shell
+# arithmetic only
+_pr_text() {
+	_p_dt=$4; [ "$_p_dt" -ge 1 ] || _p_dt=1
+	_p_t="$1: $(($2 / 1048576))"
+	[ "$3" -le 0 ] || _p_t="$_p_t/$(($3 / 1048576))"
+	_p_t="$_p_t MiB"
+	[ "$3" -le 0 ] || _p_t="$_p_t ($(($2 * 100 / $3))%)"
+	_p_r=$(($2 * 10 / 1048576 / _p_dt))
+	_p_t="$_p_t, $((_p_r / 10)).$((_p_r % 10)) MiB/s"
+	if [ "$_p_r" -gt 0 ] && [ "$3" -gt "$2" ]; then
+		_p_l=$(( ($3 - $2) * 10 / 1048576 / _p_r ))
+		if [ "$_p_l" -ge 60 ]; then _p_t="$_p_t, about $((_p_l / 60)) min left"; else _p_t="$_p_t, about $_p_l s left"; fi
+	fi
+	echo "$_p_t"
+}
+# _pr_watch PID FD NAME LEN: every HB s, report the offset of descriptor FD
+# of this shell (dd and head share it) while PID runs. It also writes the
+# position for the rescue screen ("POS OFF LEN NAME").
+_pr_watch() {
+	_w_t0=$(date +%s)
+	while kill -0 "$1" 2>/dev/null; do
+		_w_i=0
+		while [ "$_w_i" -lt "$HB" ] && kill -0 "$1" 2>/dev/null; do sleep 1; _w_i=$((_w_i + 1)); done
+		kill -0 "$1" 2>/dev/null || break
+		_w_pos=$(sed -n 's/^pos:[[:space:]]*//p' "/proc/$$/fdinfo/$2" 2>/dev/null) || _w_pos=
+		[ -n "$_w_pos" ] || continue
+		_w_txt=$(_pr_text "$3" "$_w_pos" "$4" "$(( $(date +%s) - _w_t0 ))")
+		say "  $_w_txt"
+		[ ! -e "$RUN/tsx-rescue-login" ] || echo "$_w_pos 0 $4 $3" > "$RUN/tsx-progress" 2>/dev/null || true
+	done
+}
+# pr_write DEV NAME LEN SRC: copy SRC (a file, or - for standard input) onto
+# DEV with dd, with progress. A background job in ash gets /dev/null as its
+# standard input, so the real input moves to descriptor 7 first.
+pr_write() {
+	exec 8<>"$1"
+	if [ "$4" = - ]; then exec 7<&0; else exec 7<"$4"; fi
+	dd bs=1M conv=fsync <&7 >&8 2> "$TMP/uc-pxx-install.dd" &
+	_d_pid=$!
+	_pr_watch $_d_pid 8 "$2" "$3" &
+	_d_rp=$!
+	wait $_d_pid && _d_rc=0 || _d_rc=$?
+	wait $_d_rp 2>/dev/null || true
+	exec 7<&- 8<&-
+	return $_d_rc
+}
+# pr_sha DEV NAME BYTES: sha256 of the first BYTES bytes of DEV, with progress
+pr_sha() {
+	exec 6<"$1"
+	{ head -c "$3" <&6 | sha256sum | cut -d' ' -f1 > "$TMP/uc-pxx-install.sha"; } &
+	_s_pid=$!
+	_pr_watch $_s_pid 6 "$2" "$3" &
+	_s_rp=$!
+	wait $_s_pid && _s_rc=0 || _s_rc=$?
+	wait $_s_rp 2>/dev/null || true
+	exec 6<&-
+	cat "$TMP/uc-pxx-install.sha"
+	return $_s_rc
+}
+# hb TEXT CMD...: run CMD, and say TEXT with the elapsed time every HB s
+hb() {
+	_h_text=$1; shift
+	"$@" &
+	_h_pid=$!
+	( _h_t0=$(date +%s)
+	  while kill -0 $_h_pid 2>/dev/null; do
+		_h_i=0
+		while [ $_h_i -lt "$HB" ] && kill -0 $_h_pid 2>/dev/null; do sleep 1; _h_i=$((_h_i + 1)); done
+		kill -0 $_h_pid 2>/dev/null || break
+		say "  $_h_text: still running, $(( $(date +%s) - _h_t0 )) s"
+	  done ) &
+	_h_rp=$!
+	wait $_h_pid && _h_rc=0 || _h_rc=$?
+	wait $_h_rp 2>/dev/null || true
+	return $_h_rc
+}
+
+part() {
+	for u in "$SYSB"/mmcblk*p*/uevent; do
+		[ -r "$u" ] && grep -qx "PARTNAME=$1" "$u" || continue
+		d=${u%/uevent}; echo "${d##*/}"; return 0
+	done
+	return 1
+}
+mounted() { awk -v a="$1" -v b="$DEVD/$(basename "$1")" '$1 == a || $1 == b { f = 1 } END { exit !f }' "$MOUNTS" 2>/dev/null; }
+label() { blkid "$1" 2>/dev/null | sed -n 's/.*LABEL="\([^"]*\)".*/\1/p'; }
+fstype() { blkid "$1" 2>/dev/null | sed -n 's/.* TYPE="\([^"]*\)".*/\1/p'; }
+
+# ------------------------------------------------------ step 1: preflight ---
+say "preflight (nothing is written yet)"
+rp=$(part "$SYSA_NAME") || die "no partition with the GPT name $SYSA_NAME"
+[ "$rp" = "$SYSA_DEV" ] || die "$SYSA_NAME is $rp, not $SYSA_DEV: refusing"
+ROOT=$DEVD/$rp
+say "  target       : $ROOT (GPT name $SYSA_NAME)"
+mt=$(cat "$SYSB/${rp%p*}/device/type" 2>/dev/null || true)
+case $mt in MMC*) ;; *) die "${rp%p*} is not an eMMC (type '${mt:-unknown}'): refusing";; esac
+[ -b "$ROOT" ] || [ -f "$ROOT" ] || die "$ROOT is not a block device"
+ssz=$(cat "$SYSB/$rp/size" 2>/dev/null || echo 0)
+[ "$ssz" = "$SYSA_SECTORS" ] || die "$SYSA_NAME has $ssz sectors, expected $SYSA_SECTORS (1792 MiB): refusing"
+say "  size         : $((ssz / 2048)) MiB"
+mounted "$ROOT" && die "$ROOT ($SYSA_NAME) is mounted"
+say "  now holds    : $(fstype "$ROOT" || true) '$(label "$ROOT" || true)'"
+# the A/B state: the unit must have a slot that boots whatever happens here
+[ -x "$BOOTCTL" ] || die "no $BOOTCTL: cannot check the A/B state"
+bc=$("$BOOTCTL" status 2>&1) || die "uc-pxx-bootctl status failed ($bc)"
+cur=$(printf '%s\n' "$bc" | sed -n 's/^.*current: A{prio \([0-9]*\) tries \([0-9]*\) succ \([0-9]*\)} B{prio \([0-9]*\) tries \([0-9]*\) succ \([0-9]*\)}.*$/\1 \2 \3 \4 \5 \6/p' | head -n 1)
+[ -n "$cur" ] || die "cannot read the A/B state from: $bc"
+set -- $cur
+say "  slot A       : priority $1, tries $2, successful $3"
+say "  slot B       : priority $4, tries $5, successful $6"
+[ "$6" = 1 ] && [ "$5" = 0 ] && [ "$4" -ge 1 ] && [ "$4" -le 14 ] ||
+	die "slot B is not successful with priority 1 to 14: the unit would have no fallback. Refusing."
+if [ "$check" = 1 ]; then
+	say "done: preflight OK. --check writes nothing"
+	exit 0
+fi
+echo "$sha" | grep -qE '^[0-9a-f]{64}$' || { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+[ -z "$img" ] || [ -r "$img" ] || die "$img: not readable"
+if [ -n "$img" ] && [ "$size" -eq 0 ]; then size=$(wc -c < "$img"); fi
+if [ "$size" -gt 0 ]; then
+	[ "$size" -le $((SYSA_SECTORS * 512)) ] || die "the image ($size bytes) is larger than $SYSA_NAME"
+	say "  image        : $((size / 1048576)) MiB, sha256 $sha"
+else
+	say "  image        : from standard input (give --size to see percent), sha256 $sha"
+fi
+say "  will write   : $ROOT only. Not boot_a, not misc, nothing else"
+say "preflight OK"
+
+# ----------------------------------------------------- step 2: system_a ---
+say "writing the image into $SYSA_NAME ($ROOT). DO NOT power off the system"
+t_w=$(date +%s)
+rm -f "$RUN/tsx-progress" 2>/dev/null || true
+wrc=0
+if [ -n "$img" ]; then pr_write "$ROOT" "$SYSA_NAME" "$size" "$img" || wrc=$?
+else pr_write "$ROOT" "$SYSA_NAME" "$size" - || wrc=$?; fi
+[ "$wrc" = 0 ] || die "dd failed with code $wrc ($(tail -n 1 "$TMP/uc-pxx-install.dd")). $SYSA_NAME is not usable: run this again"
+n=$(sed -n 's/^\([0-9][0-9]*\) bytes.*/\1/p' "$TMP/uc-pxx-install.dd" | tail -n 1)
+[ -n "$n" ] && [ "$n" -gt 0 ] || die "nothing written ($(tail -n 1 "$TMP/uc-pxx-install.dd"))"
+[ "$size" -eq 0 ] || [ "$n" -eq "$size" ] || die "wrote $n bytes, the stream should have $size bytes (cut short?). $SYSA_NAME is not usable: run this again"
+[ "$n" -le $((SYSA_SECTORS * 512)) ] || die "the image is larger than $SYSA_NAME"
+say "  $(_pr_text "$SYSA_NAME written" "$n" "$n" "$(( $(date +%s) - t_w ))")"
+sync; { echo 3 > /proc/sys/vm/drop_caches; } 2>/dev/null || true
+say "reading back $n bytes"
+t_r=$(date +%s)
+got=$(pr_sha "$ROOT" "$SYSA_NAME read-back" "$n") || die "the read-back of $SYSA_NAME failed"
+say "  $(_pr_text "$SYSA_NAME read back" "$n" "$n" "$(( $(date +%s) - t_r ))")"
+[ "$got" = "$sha" ] || die "sha256 of what is in $SYSA_NAME is $got, expected $sha (bad transfer?). $SYSA_NAME is not usable: run this again"
+say "sha256 matches"
+[ "$(fstype "$ROOT")" = ext4 ] || die "the image is not an ext4 file system"
+[ "$(label "$ROOT")" = tsxroot ] || die "the image has no ext4 label tsxroot (found '$(label "$ROOT")')"
+say "$SYSA_NAME verified (ext4, label tsxroot). Checking and growing the file system"
+
+# ------------------------------------------- step 3: check and grow ---
+rc=0; hb "checking the root file system" e2fsck -f -p "$ROOT" >&2 || rc=$?
+[ "$rc" -lt 4 ] || die "e2fsck of the new root file system failed (code $rc)"
+hb "growing the root file system" resize2fs "$ROOT" >&2 || say "WARNING: resize2fs failed. /init tries again at the next boot"
+sync
+rm -f "$RUN/tsx-progress" 2>/dev/null || true
+say "done: 'reboot -f' starts the new root file system"

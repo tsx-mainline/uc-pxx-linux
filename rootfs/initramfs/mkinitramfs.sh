@@ -11,28 +11,45 @@
 # builds it into the kernel Image, and the kernel compresses it.
 # Env:
 #   ALPINE           Alpine branch (default v3.24)
+#   TSX_COMMON       required: a checkout of tsx-linux-common. The rescue
+#                    tools come from its rescue/usr/sbin: tsx-rescue-status,
+#                    tsx-confont, tsx-rescue-backlight, tsx-rescue-login,
+#                    tsx-data-backup and tsx-data-restore
+#   UC_PXX_BOOTCTL   required: the static aarch64 uc-pxx-bootctl
+#                    (tools/uc-pxx-bootctl/build.sh). The rescue screen and
+#                    uc-pxx-install-rootfs only read the A/B state with it.
+#                    Its sha256 must be the reviewed one
+#                    (docs/boot-control.md), or the build stops
 #   RTL8363_INIT     optional: the static aarch64 rtl8363-init
 #                    (tools/rtl8363-init/build.sh). Without it the rescue has
 #                    no wired network
-#   AUTHORIZED_KEYS  optional, test builds only: ssh public keys that the
-#                    rescue dropbear accepts. Without it the rescue has no ssh
 #   TSX_APK_LOCAL    optional: the apk tree of tsx-aports. The boot splash
 #                    (tsx-splash of tsx-linux-common) comes from its
 #                    <ALPINE>/common, checked with the key of the image.
 #                    Without it the initramfs has no boot splash
-#   TSX_COMMON       optional: a checkout of tsx-linux-common. Its
-#                    splash/mksplash.sh renders the sizes of UC_PXX_SPLASH_SIZES
 #   UC_PXX_SPLASH_SIZES  optional: extra splash sizes (WxH, separated by
 #                    spaces) that the build renders with mksplash.sh. Empty
 #                    (the default): the splash is the 1280x800 image of the
 #                    package, centered on the 1920x1200 screen of the UC-P10
 #   UIDGID           owner of OUT
-# The rescue has no root password. The shell on the serial console needs no
-# login.
+# TEST BUILDS ONLY (never in an image that goes to a user):
+#   TSX_DEV_RESCUE_HASH  a sha-512 crypt(3) hash that becomes the root password
+#                    of the rescue
+#   TSX_DEV_RESCUE_KEYS  a file with ssh public keys that the rescue dropbear
+#                    accepts at every boot
+# The image has no root password and no ssh key. tsx-rescue-login chooses the
+# login at each rescue boot: the root hash and the ssh key of the panel from
+# the root file system, or a one-time password on the rescue screen. The shell
+# on the serial console needs no login.
 set -eu
 OUT=$1
 HERE=$(cd "$(dirname "$0")" && pwd)
 [ "$(apk --print-arch)" = aarch64 ] || { echo "mkinitramfs.sh: this container is $(apk --print-arch), not aarch64"; exit 1; }
+# the reviewed uc-pxx-bootctl (the same sha256 as rootfs/mkrootfs.sh, rule 9 of the safety rules)
+BOOTCTL_SHA256=38fea6d32412e7977ebc5845b138dc1c8c2df8555dae0b64b47f8a851b45e2d7
+[ -n "${UC_PXX_BOOTCTL:-}" ] && [ -x "$UC_PXX_BOOTCTL" ] || { echo "mkinitramfs.sh: UC_PXX_BOOTCTL (the static uc-pxx-bootctl) is required"; exit 1; }
+[ "$(sha256sum "$UC_PXX_BOOTCTL" | cut -d' ' -f1)" = "$BOOTCTL_SHA256" ] || { echo "mkinitramfs.sh: UC_PXX_BOOTCTL is not the reviewed uc-pxx-bootctl ($BOOTCTL_SHA256)"; exit 1; }
+[ -n "${TSX_COMMON:-}" ] && [ -d "$TSX_COMMON/rescue/usr/sbin" ] || { echo "mkinitramfs.sh: TSX_COMMON (a tsx-linux-common checkout with rescue/usr/sbin) is required"; exit 1; }
 MIRROR=${MIRROR:-https://dl-cdn.alpinelinux.org/alpine}
 printf '%s/%s/main\n%s/%s/community\n' "$MIRROR" "${ALPINE:-v3.24}" "$MIRROR" "${ALPINE:-v3.24}" > /etc/apk/repositories
 R=/tmp/initramfs; rm -rf $R; mkdir -p $R
@@ -41,7 +58,29 @@ apk add --root $R --initdb --no-cache -q \
 	--repositories-file /etc/apk/repositories --keys-dir /etc/apk/keys \
 	alpine-baselayout busybox busybox-binsh dropbear e2fsprogs e2fsprogs-extra
 cp -a "$HERE"/overlay/. $R/
-chmod 755 $R/init $R/etc/init.d/rcS
+chmod 755 $R/init $R/etc/init.d/rcS $R/usr/sbin/uc-pxx-install-rootfs $R/usr/sbin/uc-pxx-rescue-help
+# The shared rescue tools of tsx-linux-common (package tsx-rescue-ui). The
+# board file is the one of the root file system: one source.
+for f in tsx-rescue-status tsx-confont tsx-rescue-backlight tsx-rescue-login tsx-data-backup tsx-data-restore; do
+	[ -f "$TSX_COMMON/rescue/usr/sbin/$f" ] || { echo "mkinitramfs.sh: $TSX_COMMON/rescue/usr/sbin/$f is missing"; exit 1; }
+	install -D -m 755 "$TSX_COMMON/rescue/usr/sbin/$f" $R/usr/sbin/$f
+done
+echo "rescue tools: $(cd "$TSX_COMMON" && git describe --always --dirty 2>/dev/null || echo 'tsx-linux-common, no git')"
+install -D -m 644 /w/rootfs/overlay/usr/local/lib/tsx/board.sh $R/usr/local/lib/tsx/board.sh
+install -D -m 755 "$UC_PXX_BOOTCTL" $R/usr/sbin/uc-pxx-bootctl
+[ "$(sha256sum $R/usr/sbin/uc-pxx-bootctl | cut -d' ' -f1)" = "$BOOTCTL_SHA256" ] || { echo "mkinitramfs.sh: uc-pxx-bootctl changed in the copy"; exit 1; }
+# Terminus bold console fonts for tsx-confont (SIL OFL 1.1). It picks the
+# largest one that gives at least 80x25 cells on the console: 16x32 on the
+# 1920x1200 console of the UC-P10 (120x37). The fonts are built in the build
+# container and go into the initramfs uncompressed, for setfont.
+apk add -q --no-cache font-terminus > /dev/null
+mkdir -p $R/usr/share/tsx/consolefonts
+for f in ter-116b ter-118b ter-120b ter-122b ter-124b ter-128b ter-132b; do
+	zcat /usr/share/consolefonts/$f.psf.gz > $R/usr/share/tsx/consolefonts/$f.psf
+done
+# the version line of the rescue screen
+mkdir -p $R/etc/tsx
+echo "uc-pxx initramfs rescue (boot image)" > $R/etc/tsx/rescue-version
 if [ -n "${RTL8363_INIT:-}" ]; then
 	[ -x "$RTL8363_INIT" ] || { echo "mkinitramfs.sh: RTL8363_INIT=$RTL8363_INIT is not an executable"; exit 1; }
 	install -m 755 "$RTL8363_INIT" $R/usr/sbin/rtl8363-init
@@ -83,16 +122,26 @@ if [ -n "${TSX_APK_LOCAL:-}" ]; then
 else
 	echo "WARNING: no TSX_APK_LOCAL: the initramfs has no boot splash"
 fi
-sed -i 's|^root:[^:]*:|root:*:|' $R/etc/shadow
-if [ -n "${AUTHORIZED_KEYS:-}" ] && [ -s "$AUTHORIZED_KEYS" ]; then
-	mkdir -p $R/root/.ssh; cp "$AUTHORIZED_KEYS" $R/root/.ssh/authorized_keys
-	chmod 700 $R/root $R/root/.ssh; chmod 600 $R/root/.ssh/authorized_keys
-	echo "rescue ssh key: AUTHORIZED_KEYS (test build, do not publish)"
+# root: the field is locked. tsx-rescue-login sets the real login at boot.
+if [ -n "${TSX_DEV_RESCUE_HASH:-}" ]; then
+	case "$TSX_DEV_RESCUE_HASH" in \$6\$*) ;; *) echo "TSX_DEV_RESCUE_HASH is not a sha-512 crypt hash"; exit 1;; esac
+	sed -i "s|^root:[^:]*:|root:$TSX_DEV_RESCUE_HASH:|" $R/etc/shadow
+	echo "rescue root password: TSX_DEV_RESCUE_HASH (TEST BUILD, do not publish)"
 else
-	echo "rescue ssh: none (no AUTHORIZED_KEYS)"
+	sed -i 's|^root:[^:]*:|root:*:|' $R/etc/shadow
+	echo "rescue root password: none (tsx-rescue-login chooses at boot)"
+fi
+if [ -n "${TSX_DEV_RESCUE_KEYS:-}" ] && [ -s "$TSX_DEV_RESCUE_KEYS" ]; then
+	mkdir -p $R/root/.ssh; cp "$TSX_DEV_RESCUE_KEYS" $R/root/.ssh/authorized_keys
+	chmod 700 $R/root $R/root/.ssh; chmod 600 $R/root/.ssh/authorized_keys
+	echo "rescue ssh key: TSX_DEV_RESCUE_KEYS (TEST BUILD, do not publish)"
+else
+	echo "rescue ssh key: none (tsx-rescue-login chooses at boot)"
 fi
 for f in /sbin/init /sbin/switch_root /sbin/findfs /sbin/blkid /sbin/e2fsck /usr/sbin/resize2fs /usr/sbin/dumpe2fs \
-	/usr/sbin/dropbear /usr/share/udhcpc/default.script; do
+	/usr/sbin/dropbear /usr/share/udhcpc/default.script /usr/sbin/tsx-rescue-status /usr/sbin/tsx-rescue-login \
+	/usr/sbin/tsx-rescue-backlight /usr/sbin/tsx-confont /usr/sbin/tsx-data-backup /usr/sbin/uc-pxx-install-rootfs \
+	/usr/sbin/uc-pxx-bootctl /usr/share/tsx/consolefonts/ter-132b.psf /usr/local/lib/tsx/board.sh; do
 	[ -e "$R$f" ] || { echo "mkinitramfs.sh: $f is missing in the initramfs"; exit 1; }
 done
 echo uc-pxx-rescue > $R/etc/hostname

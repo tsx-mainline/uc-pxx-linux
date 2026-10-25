@@ -427,5 +427,3 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 - A data volume check for the first boot (`tsx-data` of common).
 - Chromium flags for panfrost (`TSX_BROWSER_GL_FLAGS`).
 - The Bluetooth proxy default (`TSX_BT_PROXY_DEFAULT` is `off` until tested).
-- The rescue system has no screen output yet. Its shell is on the serial
-  console only.

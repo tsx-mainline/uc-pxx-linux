@@ -18,10 +18,17 @@
 #               IMG_HEADROOM_MB, default 256, at most 1700 because system_a is 1792)
 #   KVER        which staged module trees under modules/lib/modules/ go into
 #               the rootfs (default: all of them, separated by spaces)
-#   AUTHORIZED_KEYS  test builds only: ssh public keys that the rootfs (and
-#               the rescue of the initramfs) accept at every boot, baked into
-#               the image (default: rootfs/authorized_keys if it exists, never
-#               committed)
+#   AUTHORIZED_KEYS  test builds only: ssh public keys that the rootfs accepts
+#               at every boot, baked into the image (default:
+#               rootfs/authorized_keys if it exists, never committed). The
+#               initramfs ignores it: the rescue takes the login of the panel
+#               (tsx-rescue-login)
+#   TSX_DEV_RESCUE_KEYS  TEST ONLY, "initramfs": a file with ssh public keys
+#               that the rescue accepts at every boot. Without it the rescue
+#               has no baked key
+#   TSX_DEV_RESCUE_HASH  TEST ONLY, "initramfs": a sha-512 crypt(3) hash that
+#               becomes the root password of the rescue. Never publish such
+#               an image
 #   RTL8363_INIT  the static aarch64 rtl8363-init (tools/rtl8363-init/build.sh).
 #               "initramfs" puts it into the rescue. The DEV mode puts it into
 #               the rootfs. The binary links with the Realtek SDK and is not
@@ -36,7 +43,7 @@
 #               script files of that checkout over the installed common
 #               packages (mkrootfs.sh). The list is in /etc/tsx/dev-common-overlay
 #               of the image.
-#   UC_PXX_BOOTCTL  DEV mode: the static aarch64 uc-pxx-bootctl
+#   UC_PXX_BOOTCTL  "initramfs" (required) and DEV mode: the static aarch64 uc-pxx-bootctl
 #               (tools/uc-pxx-bootctl/build.sh). Its sha256 must be the
 #               reviewed one (docs/boot-control.md), or the build stops.
 #   PROFILE     what the rootfs holds (default ha): console (text login on the
@@ -61,7 +68,9 @@
 #               when it does not (docs/rootfs.md "Build the image").
 #   TSX_COMMON  a checkout of tsx-linux-common (default: ../tsx-linux-common
 #               next to this repository, if it has splash/mksplash.sh). It
-#               becomes the read-only mount /common in the container. Its
+#               becomes the read-only mount /common in the container. The
+#               initramfs needs it: the rescue tools come from its rescue/
+#               folder. Its
 #               splash/mksplash.sh renders the sizes of UC_PXX_SPLASH_SIZES.
 #   UC_PXX_SPLASH_SIZES  extra splash sizes (WxH, separated by spaces) for
 #               mksplash.sh. Empty (the default): the splash is the 1280x800
@@ -111,9 +120,7 @@ common_args() {
 	if [ -n "${TSX_COMMON:-}" ]; then
 		[ -f "$TSX_COMMON/splash/mksplash.sh" ] || { echo "TSX_COMMON=$TSX_COMMON has no splash/mksplash.sh"; exit 1; }
 		dargs+=(-v "$(cd "$TSX_COMMON" && pwd):/common:ro" -e TSX_COMMON=/common)
-		echo "splash images: mksplash.sh of $TSX_COMMON ($(git -C "$TSX_COMMON" describe --always --dirty 2>/dev/null || echo 'no git'))"
-	else
-		echo "no TSX_COMMON: no extra splash sizes"
+		echo "tsx-linux-common: $TSX_COMMON ($(git -C "$TSX_COMMON" describe --always --dirty 2>/dev/null || echo 'no git'))"
 	fi
 }
 need_binfmt() {
@@ -222,12 +229,24 @@ initramfs() {
 	need_binfmt
 	local dargs
 	dargs=(--rm --platform $PLATFORM -v "$REPO:/w" -e ALPINE="$ALPINE" -e UIDGID="$UIDGID")
-	if [ -s "$AUTHORIZED_KEYS" ]; then dargs+=(-v "$(readlink -f "$AUTHORIZED_KEYS"):/in/authorized_keys:ro" -e AUTHORIZED_KEYS=/in/authorized_keys); fi
+	# The rescue login comes from the panel at boot. A test build may bake a
+	# root password hash or an ssh key, with these two variables only.
+	if [ -n "${TSX_DEV_RESCUE_KEYS:-}" ]; then
+		echo "WARNING: TSX_DEV_RESCUE_KEYS: the rescue accepts this ssh key at every boot (TEST BUILD, never publish)"
+		in_file TSX_DEV_RESCUE_KEYS "$TSX_DEV_RESCUE_KEYS"
+	fi
+	if [ -n "${TSX_DEV_RESCUE_HASH:-}" ]; then
+		echo "WARNING: TSX_DEV_RESCUE_HASH: the rescue has a fixed root password (TEST BUILD, never publish)"
+		dargs+=(-e TSX_DEV_RESCUE_HASH="$TSX_DEV_RESCUE_HASH")
+	fi
 	in_file RTL8363_INIT "${RTL8363_INIT:-}"
+	[ -n "${UC_PXX_BOOTCTL:-}" ] || { echo "UC_PXX_BOOTCTL is required (tools/uc-pxx-bootctl/build.sh)"; exit 1; }
+	in_file UC_PXX_BOOTCTL "$UC_PXX_BOOTCTL"
+	[ -n "${TSX_COMMON:-}" ] || { echo "TSX_COMMON is required (a tsx-linux-common checkout, for the rescue tools)"; exit 1; }
+	common_args
 	if [ -n "${TSX_APK_LOCAL:-}" ]; then
 		need_apk_tree
 		dargs+=(-v "$(cd "$TSX_APK_LOCAL" && pwd):/aports:ro" -e TSX_APK_LOCAL=/aports)
-		common_args
 	else
 		echo "WARNING: no TSX_APK_LOCAL: the initramfs has no boot splash"
 	fi
