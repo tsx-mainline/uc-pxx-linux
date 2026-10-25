@@ -9,3 +9,7 @@ tty1::respawn:/sbin/getty 38400 tty1
 ::respawn:/bin/sh -c "[ -c /dev/ttyS2 ] && exec /sbin/getty -L 115200 ttyS2 vt100 || exec sleep 2147483647"
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/sbin/openrc shutdown
+# The last shutdown step: uc-pxx-reboot loader|fastboot leaves the mode in
+# /run/uc-pxx-reboot.mode, and this line restarts with it after the system
+# is stopped. Without the file it does nothing.
+::shutdown:/usr/sbin/uc-pxx-reboot --pending

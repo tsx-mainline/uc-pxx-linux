@@ -183,7 +183,8 @@ if [ "$DEV" = 1 ]; then
 	done
 	install -m 755 -o 0 -g 0 "$UC_PXX_BOOTCTL" $R/usr/sbin/uc-pxx-bootctl
 	install -m 755 -o 0 -g 0 "$RTL8363_INIT" $R/usr/sbin/rtl8363-init
-	install -m 755 -o 0 -g 0 "$UC_PXX_REBOOT" $R/usr/sbin/uc-pxx-reboot
+	# the last step of uc-pxx-reboot (the script comes with rootfs/overlay)
+	install -D -m 755 -o 0 -g 0 "$UC_PXX_REBOOT" $R/usr/libexec/uc-pxx-reboot-syscall
 	[ "$(sha256sum $R/usr/sbin/uc-pxx-bootctl | cut -d' ' -f1)" = "$BOOTCTL_SHA256" ] || { echo "ERROR: uc-pxx-bootctl changed in the copy"; exit 1; }
 	mkdir -p $R/etc/tsx
 	echo "TEST BUILD (UC_PXX_DEV_OVERLAY=1), not from the uc-pxx packages. Do not publish." > $R/etc/tsx/dev-overlay

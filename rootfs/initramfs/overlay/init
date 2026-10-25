@@ -112,9 +112,11 @@ splash
 # are touch keys of the maXTouch controller (KEY_MUTE 113, KEY_VOLUMEDOWN 114).
 # The state comes from EVIOCGKEY (evtest --query), so no event is needed. If
 # both keys are down, the script waits until they have been down for 3 s, shows
-# a line and runs `uc-pxx-reboot loader`. The boot sets the boot mode register
-# (reboot-mode of the device tree), and the vendor U-Boot enters the download
-# mode. Nothing is written to the eMMC. A power cycle leaves the loader mode.
+# a line and runs `uc-pxx-reboot loader`. Here PID 1 is this script and nothing
+# of the eMMC is mounted, so uc-pxx-reboot restarts at once. The restart sets
+# the boot mode register (reboot-mode of the device tree), and the vendor
+# U-Boot enters the download mode. Nothing is written to the eMMC. A power
+# cycle leaves the loader mode.
 # With no key down this adds no delay (the device is found at once or after at
 # most 2 s).
 loader_dev() {

@@ -185,6 +185,7 @@ The tools in the rescue:
 | `tsx-data-backup`, `tsx-data-restore` | Back up and restore the panel data. The unit has no data partition, so it works on the root file system (`/data`, `/root`, `/home`, `/var/lib/...`) |
 | `uc-pxx-bootctl status` | Shows the A/B state |
 | `uc-pxx-reboot loader` | Restarts into the loader (download) mode. See "The loader mode" |
+| `uc-pxx-reboot fastboot` | Restarts into the fastboot mode of U-Boot. See "Restart into a U-Boot mode" |
 
 `uc-pxx-install-rootfs` does a preflight first and stops at the first
 failed check: the partition is `mmcblk0p22`, on the eMMC, exactly 1792 MiB,
@@ -213,7 +214,7 @@ default 15) and `uc-pxx.init=PATH` (default `/sbin/init`).
 
 The build takes the tools from a checkout of tsx-linux-common (`TSX_COMMON`),
 the reviewed `uc-pxx-bootctl` (`UC_PXX_BOOTCTL`, checked by its sha256),
-`uc-pxx-reboot` (`UC_PXX_REBOOT`, `tools/uc-pxx-reboot/build.sh`) and
+`uc-pxx-reboot-syscall` (`UC_PXX_REBOOT`, `tools/uc-pxx-reboot/build.sh`) and
 `RTL8363_INIT` (the tool of `tools/rtl8363-init`, built with the Realtek SDK)
 as files. This repository holds none of them.
 
@@ -232,19 +233,60 @@ The code reads the key state with `evtest --query` (EVIOCGKEY), because
   no delay. If a key is released, the boot goes on.
 - The service `uc-pxx-loader-key` (default runlevel) does the same on the
   running system: hold both keys for 10 s at any time.
-- `uc-pxx-reboot loader` calls `reboot(2)` with `RESTART2` and the argument
-  `loader` (the busybox `reboot` has no argument). The device tree node
-  `reboot-mode` (`syscon-reboot-mode` on the PMU GRF, offset `0x300`,
-  `mode-loader = <BOOT_BL_DOWNLOAD>`) turns the argument into the magic value
-  `0x5242c301`. It is the value of the stock device tree. The vendor U-Boot
-  then enters the download mode (rockusb). The kernel branch `uc-pxx-lts`
-  carries the node since `dce705391a49`.
+- `uc-pxx-reboot loader` restarts with the argument `loader`. The device
+  tree turns it into `BOOT_BL_DOWNLOAD`, and the vendor U-Boot enters the
+  download mode (rockusb). See "Restart into a U-Boot mode".
 - Nothing is written to the eMMC. A power cycle leaves the loader mode.
 - The rescue system has the same program: `uc-pxx-reboot loader`.
 
 The first test needs a unit: hold the keys at the boot and look for the
 rockusb device on the USB-C port of a host. The state of a touch key that is
 held from before the driver probed has not been tested.
+
+### Restart into a U-Boot mode
+
+The vendor U-Boot reads the boot mode register `PMUGRF_OS_REG0` (PMU GRF,
+offset `0x300`) at each start. The device tree node `reboot-mode`
+(`syscon-reboot-mode`) writes the register when Linux restarts. The values
+are the ones of the stock device tree:
+
+| Restart argument | Value | U-Boot |
+|---|---|---|
+| none (a plain `reboot`) | `BOOT_NORMAL` (`0x5242c300`) | Boots the slot |
+| `loader`, `bootloader` | `BOOT_BL_DOWNLOAD` (`0x5242c301`) | Download mode (rockusb, `2207:330c`) |
+| `fastboot` | `BOOT_FASTBOOT` (`0x5242c309`) | Fastboot (`18d1:d00d`). Its log says "boot mode: bootloader" |
+| `recovery` | `BOOT_RECOVERY` (`0x5242c303`) | Not tested |
+
+`bootloader` means rockusb here, as in the stock Android system. U-Boot does
+not clear the register when it enters fastboot. So `fastboot reboot` comes
+back into fastboot. A kernel that `fastboot boot` started has the value too,
+and the `BOOT_NORMAL` value of its next plain reboot clears it. A power cycle
+also clears the register. The node has `mode-fastboot` since the kernel
+commit "Add mode-fastboot to the reboot-mode node" of `uc-pxx-lts`.
+
+The busybox `reboot` has no argument, and a plain reboot writes
+`BOOT_NORMAL`. So a register write before `reboot` has no effect. Use
+`uc-pxx-reboot loader` or `uc-pxx-reboot fastboot` (the script
+`/usr/sbin/uc-pxx-reboot`). It stops the system cleanly:
+
+1. It writes the mode to `/run/uc-pxx-reboot.mode` and runs `reboot`.
+2. busybox init runs the shutdown lines of `/etc/inittab`. `openrc
+   shutdown` stops the services, ends the other processes and remounts the
+   file systems read-only. The rescue system runs `umount -a -r` instead.
+3. The last shutdown line, `uc-pxx-reboot --pending`, reads the mode file
+   and runs `/usr/libexec/uc-pxx-reboot-syscall MODE`. That small static
+   program calls `sync` and `reboot(2)` with `RESTART2` and the argument.
+   With no mode file the line does nothing, and init restarts as usual.
+
+In `/init` of the initramfs, PID 1 is the `/init` script and nothing of the
+eMMC is mounted. There `uc-pxx-reboot` runs `uc-pxx-reboot-syscall` at
+once. It does the same when `/etc/inittab` has no `--pending` line. busybox
+init reads `/etc/inittab` only at the start. So after an update that adds
+the line, the clean path works after the next boot.
+
+`uc-pxx-reboot-syscall` takes only `loader` and `fastboot`. Do not run it by
+hand on a running system: it stops no service. Nothing is written to the
+eMMC. The source is `tools/uc-pxx-reboot/uc-pxx-reboot-syscall.c`.
 
 ### The boot splash
 

@@ -412,6 +412,7 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 | `rootfs/tests/test-hw.sh` | `tsx-hw` with a made-up `/sys`: the facts and the layers of `panel-board.d` |
 | `rootfs/tests/test-als.sh` | `uc-pxx-als` and `tsx-als` with a made-up IIO device: counts to lux, the files, the backlight range, a reload |
 | `rootfs/tests/test-loader-key.sh` | The loader mode keys: `uc-pxx-loader-key`, the check in `/init`, the device tree node |
+| `rootfs/tests/test-reboot.sh` | `uc-pxx-reboot loader` and `fastboot`: the clean path through init, `--pending`, the direct path of `/init`, the inittab lines |
 | `rootfs/tests/test-rescue.sh` | The rescue system: the screen, the console font, the login, the build file |
 | `rootfs/tests/test-install-rootfs.sh` | `uc-pxx-install-rootfs` against a made-up `/sys` and `/dev` |
 | `rootfs/tests/test-presence.sh` | `uc-pxx-presence` with a made-up input device: the find of the switch, the states, the wake call, a reload |

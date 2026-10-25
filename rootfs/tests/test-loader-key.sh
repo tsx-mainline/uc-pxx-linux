@@ -108,8 +108,8 @@ DT=$REPO/../linux-uc-pxx-6.18/arch/arm64/boot/dts/rockchip/rk3399-crestron-uc-px
 if [ -f "$DT" ]; then
 	grep -q 'syscon-reboot-mode' "$DT" && grep -q 'mode-loader = <BOOT_BL_DOWNLOAD>' "$DT" && grep -q 'offset = <0x300>' "$DT" && ok "the dtsi has reboot-mode with mode-loader = BOOT_BL_DOWNLOAD at 0x300" || bad "no reboot-mode node in the dtsi"
 else echo "  (no kernel checkout next to the repository: the dtsi check is skipped)"; fi
-grep -q 'LINUX_REBOOT_CMD_RESTART2' "$REPO/tools/uc-pxx-reboot/uc-pxx-reboot.c" && ok "uc-pxx-reboot uses RESTART2" || bad "no RESTART2"
-grep -q 'mmcblk' "$REPO/tools/uc-pxx-reboot/uc-pxx-reboot.c" "$LK" && bad "the loader code names the eMMC" || ok "the loader code does not touch the eMMC"
+grep -q 'LINUX_REBOOT_CMD_RESTART2' "$REPO/tools/uc-pxx-reboot/uc-pxx-reboot-syscall.c" && ok "uc-pxx-reboot-syscall uses RESTART2" || bad "no RESTART2"
+grep -q 'mmcblk' "$REPO/tools/uc-pxx-reboot/uc-pxx-reboot-syscall.c" "$LK" && bad "the loader code names the eMMC" || ok "the loader code does not touch the eMMC"
 
 echo "$N passed, $F failed"
 [ "$F" = 0 ]

@@ -1,0 +1,100 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# uc-pxx-reboot: restart the unit into a mode of the vendor U-Boot, with a
+# clean shutdown first.
+#
+#   uc-pxx-reboot [--dry-run] loader     the download mode (rockusb)
+#   uc-pxx-reboot [--dry-run] fastboot   the fastboot mode
+#   uc-pxx-reboot --pending              the last shutdown step of inittab
+#
+# The busybox reboot has no argument. The kernel takes the mode only from
+# reboot(2) with RESTART2 (uc-pxx-reboot-syscall). The reboot-mode node of the
+# device tree turns it into a value in the boot mode register, and U-Boot
+# reads it at the next start. A plain reboot writes the normal value there.
+# So writing the register first and then running reboot does not work.
+#
+# On a running system (PID 1 is busybox init and /etc/inittab has the line
+# "::shutdown:/usr/sbin/uc-pxx-reboot --pending") the script writes the mode
+# to /run/uc-pxx-reboot.mode and runs reboot. init runs the shutdown lines:
+# "openrc shutdown" stops the services, kills the other processes and
+# remounts the file systems read-only. Then "uc-pxx-reboot --pending" reads
+# the mode file and runs uc-pxx-reboot-syscall. Without the mode file it does
+# nothing, and init restarts as usual. The rescue system works the same way,
+# with "umount -a -r" in place of openrc.
+#
+# In /init of the initramfs (PID 1 is the /init script, nothing of the eMMC
+# is mounted), or when inittab has no such line, the script runs sync and
+# uc-pxx-reboot-syscall at once.
+#
+# The script writes nothing to the eMMC. A power cycle leaves both modes.
+# Env (tests): UC_PXX_REBOOT_SYSCALL (/usr/libexec/uc-pxx-reboot-syscall),
+# UC_PXX_RUN (/run), UC_PXX_PROC (/proc), UC_PXX_INITTAB (/etc/inittab),
+# UC_PXX_INIT_REBOOT (reboot), UC_PXX_KMSG (/dev/kmsg).
+SYSCALL=${UC_PXX_REBOOT_SYSCALL:-/usr/libexec/uc-pxx-reboot-syscall}
+RUN=${UC_PXX_RUN:-/run}
+PROC=${UC_PXX_PROC:-/proc}
+INITTAB=${UC_PXX_INITTAB:-/etc/inittab}
+INIT_REBOOT=${UC_PXX_INIT_REBOOT:-reboot}
+KMSG=${UC_PXX_KMSG:-/dev/kmsg}
+MODEF=$RUN/uc-pxx-reboot.mode
+HOOK='::shutdown:/usr/sbin/uc-pxx-reboot --pending'
+
+log() {
+	echo "uc-pxx-reboot: $*" >&2
+	echo "uc-pxx-reboot: $*" 2>/dev/null > "$KMSG"
+}
+usage() {
+	echo "usage: uc-pxx-reboot [--dry-run] loader|fastboot" >&2
+	exit 2
+}
+valid() {
+	case $1 in loader|fastboot) return 0;; esac
+	return 1
+}
+
+if [ "${1:-}" = --pending ]; then
+	[ $# = 1 ] || usage
+	[ -e "$MODEF" ] || exit 0
+	mode=$(cat "$MODEF" 2>/dev/null)
+	valid "$mode" || { log "the mode file has '$mode': a normal restart"; exit 0; }
+	log "the system is stopped: restarting into the $mode mode"
+	sync
+	exec "$SYSCALL" "$mode"
+fi
+
+dry=
+if [ "${1:-}" = --dry-run ]; then dry=1; shift; fi
+[ $# = 1 ] && valid "$1" || usage
+mode=$1
+
+# busybox init is PID 1 (its command line is /sbin/init). In /init of the
+# initramfs, PID 1 is the shell that runs the /init script.
+how=now
+pid1=$(tr '\0' ' ' < "$PROC/1/cmdline" 2>/dev/null)
+set -- $pid1
+if [ "${1##*/}" = init ] && grep -qxF "$HOOK" "$INITTAB" 2>/dev/null; then
+	how=init
+fi
+
+if [ -n "$dry" ]; then
+	case $how in
+	init) echo "would stop the system with init, then restart with the argument '$mode'";;
+	*) echo "would restart now with the argument '$mode'";;
+	esac
+	exit 0
+fi
+
+if [ "$how" = init ]; then
+	log "restarting into the $mode mode: init stops the system first"
+	{ printf '%s\n' "$mode" > "$MODEF.new" && mv "$MODEF.new" "$MODEF"; } 2>/dev/null ||
+		{ log "cannot write $MODEF"; exit 1; }
+	if ! "$INIT_REBOOT"; then
+		rm -f "$MODEF"
+		log "$INIT_REBOOT failed"
+		exit 1
+	fi
+	exit 0
+fi
+log "restarting into the $mode mode now (no init with the shutdown line)"
+sync
+exec "$SYSCALL" "$mode"

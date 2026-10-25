@@ -44,8 +44,9 @@
 #               packages (mkrootfs.sh). The list is in /etc/tsx/dev-common-overlay
 #               of the image.
 #   UC_PXX_REBOOT  "initramfs" (required) and DEV mode: the static aarch64
-#               uc-pxx-reboot (tools/uc-pxx-reboot/build.sh), for the loader
-#               mode with Volume down + Mute
+#               uc-pxx-reboot-syscall (tools/uc-pxx-reboot/build.sh). The
+#               image installs it as /usr/libexec/uc-pxx-reboot-syscall, the
+#               last step of uc-pxx-reboot (the loader and fastboot modes)
 #   UC_PXX_BOOTCTL  "initramfs" (required) and DEV mode: the static aarch64 uc-pxx-bootctl
 #               (tools/uc-pxx-bootctl/build.sh). Its sha256 must be the
 #               reviewed one (docs/boot-control.md), or the build stops.

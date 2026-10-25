@@ -49,6 +49,8 @@ jobs:
         run: busybox sh rootfs/tests/test-install-rootfs.sh
       - name: rootfs/tests/test-loader-key.sh - Volume down + Mute for the loader mode, in the service and in /init
         run: busybox sh rootfs/tests/test-loader-key.sh
+      - name: rootfs/tests/test-reboot.sh - uc-pxx-reboot loader|fastboot, the shutdown line of inittab and the direct path of /init
+        run: busybox sh rootfs/tests/test-reboot.sh
       - name: rootfs/tests/test-board.sh - the board file, the MAC address from the cfg partition and the model
         run: sh rootfs/tests/test-board.sh
       - name: rootfs/tests/test-hw.sh - tsx-hw facts and the layers of panel-board.d with a made-up /sys
