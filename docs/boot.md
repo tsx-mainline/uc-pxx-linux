@@ -132,7 +132,8 @@ boot image in `boot_b`, puts it into the image and writes `boot_a`. A host
 installer can run `uc-pxx-update-boot extract BOOTIMG OUT` on a dump of
 `boot_b`, then `assemble TEMPLATE RES OUT`. The result is the same as
 `kernel/mkimage.sh --resource RES`. The tool is in the package
-`uc-pxx-boot-tools` of tsx-aports. Its review is in progress.
+`uc-pxx-boot-tools` of tsx-aports. `tsx-autoupdate` runs it after each
+install ([boot-control.md](boot-control.md) "Kernel updates").
 
 With the stock resource, U-Boot leaves the VOP scanning the logo when it
 starts the kernel. U-Boot decodes the logo into the display pool of its

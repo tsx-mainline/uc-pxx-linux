@@ -46,6 +46,32 @@ status=$rc" "the hook returns the exit status $rc of uc-pxx-arm-slot"
 done
 unset SH_CODE
 
+echo "== the board hook of tsx-autoupdate after apk upgrade =="
+SH_CODE='type tsx_board_post_update >/dev/null 2>&1 && echo defined'
+eq "$(sh_run)" "defined" "tsx_board_post_update is defined"
+grep -q '^tsx_board_post_update() { /usr/sbin/uc-pxx-post-update; }$' "$BOARD" && ok "the hook runs /usr/sbin/uc-pxx-post-update and nothing else" || bad "the hook is not exactly one call of uc-pxx-post-update"
+grep -v -e '^[[:space:]]*#' -e '^tsx_board_pre_update() { /usr/sbin/uc-pxx-arm-slot; }$' "$BOARD" | grep -Eq 'uc-pxx-(arm-slot|flash-boot)|uc-pxx-update-boot write|bootctl (arm-trying|mark-successful)' && bad "board.sh calls a writing program of the boot control outside the two hooks" || ok "board.sh calls no writing program of the boot control outside the two hooks"
+for rc in 0 1 21 41; do
+	printf '#!/bin/sh\necho "post-update-stub rc=%s"\nexit %s\n' "$rc" "$rc" > "$T/pu-stub"; chmod +x "$T/pu-stub"
+	sed "s|/usr/sbin/uc-pxx-post-update;|$T/pu-stub;|" "$BOARD" > "$T/board-pu.sh"
+	out=$(env -i PATH="$PATH" sh -c ". '$T/board-pu.sh'; tsx_board_post_update; echo status=\$?")
+	eq "$out" "post-update-stub rc=$rc
+status=$rc" "the hook returns the exit status $rc of uc-pxx-post-update"
+done
+SH_CODE='printf "%s" "$TSX_POST_UPDATE_STEP"'; eq "$(sh_run)" "writing the new kernel into boot_a" "TSX_POST_UPDATE_STEP"
+SH_CODE='for n in 1 13 21 24 30 40 41 77; do tsx_board_post_update_meaning $n; done | wc -l'; eq "$(sh_run | tr -d ' ')" 8 "tsx_board_post_update_meaning gives one line for each status"
+SH_CODE='tsx_board_post_update_meaning 21'; eq "$(sh_run)" "boot_a may hold a partial or an old image" "the meaning of 21"
+# tsx_board_update_status: one line only when uc-pxx-update-boot status says boot_a does NOT hold the kernel
+for say in "holds" "does NOT hold"; do
+	printf '#!/bin/sh\n[ "$1" = status ] || exit 9\necho "uc-pxx-update-boot: boot_a (mmcblk0p13): token x"\necho "uc-pxx-update-boot: boot_a %s the kernel of the package"\n' "$say" > "$T/ub-stub"; chmod +x "$T/ub-stub"
+	sed "s|/usr/sbin/uc-pxx-update-boot|$T/ub-stub|g" "$BOARD" > "$T/board-us.sh"
+	out=$(env -i PATH="$PATH" sh -c ". '$T/board-us.sh'; tsx_board_update_status; echo status=\$?")
+	if [ "$say" = holds ]; then eq "$out" "status=0" "update status: boot_a holds the kernel: no line"
+	else eq "$out" "boot_a does not hold the kernel of the package. Run tsx-autoupdate post-update, then restart.
+status=0" "update status: boot_a does not hold the kernel: one line"; fi
+done
+unset SH_CODE
+
 echo "== the MAC address from the cfg partition (bytes 6 to 11) =="
 # cfg: 1 MiB of zeros, with the MAC at byte 6
 mkcfg() {

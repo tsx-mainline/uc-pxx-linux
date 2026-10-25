@@ -48,6 +48,8 @@
 #                          sets at start (default 50, at most 80)
 #   TSX_CONFIG_RELOAD      services that tsx-config apply reloads when the
 #                          sensor settings change
+#   TSX_POST_UPDATE_STEP   the name of the step of tsx_board_post_update, for
+#                          the text of Home Assistant
 #
 # Functions (print the value, print nothing when the board has none)
 #   tsx_board_model        the model: UC-P10 or UC-P8
@@ -72,6 +74,17 @@
 #                          (docs/boot-control.md "The update rule"). When it
 #                          exits with a non-zero status, tsx-autoupdate does not
 #                          install and keeps the packages pending.
+#   tsx_board_post_update  the board hook of tsx-autoupdate after apk upgrade
+#                          and before the restart. It runs
+#                          /usr/sbin/uc-pxx-post-update, which writes the
+#                          kernel of uc-pxx-kernel-lts into boot_a. Status 0:
+#                          a restart is safe. 1: nothing was written, try
+#                          again later. Other: hold, a person must check the
+#                          unit (docs/boot-control.md "Kernel updates").
+#   tsx_board_post_update_meaning N  the meaning of the status N of that hook,
+#                          for the text of Home Assistant
+#   tsx_board_update_status  a line for tsx-autoupdate status when boot_a does
+#                          not hold the kernel of the package (read only)
 #   tsx_board_load         read the board data once, on a running system
 #                          (nothing to read here)
 #   tsx_board_probe DIR    point the data reader at the board data from the
@@ -173,6 +186,38 @@ tsx_board_ledbar_map() { return 0; }
 # The board hook of tsx-autoupdate. The status of the function is the status
 # of uc-pxx-arm-slot: 0 armed and verified, 1 refused, 3 A/B state unknown.
 tsx_board_pre_update() { /usr/sbin/uc-pxx-arm-slot; }
+
+# The board hook of tsx-autoupdate after apk upgrade, before the restart. All
+# of its logic is in /usr/sbin/uc-pxx-post-update (package uc-pxx-boot-tools,
+# reviewed with the boot control): it checks the reviewed files, arms slot A,
+# runs uc-pxx-update-boot write --yes and checks the A/B state. Its status
+# follows the rule of tsx-autoupdate: 0 restart, 1 try again later, any other
+# status holds every install and restart until a person checks the unit
+# (docs/boot-control.md "Kernel updates").
+tsx_board_post_update() { /usr/sbin/uc-pxx-post-update; }
+# The step and the meaning of a status, for the text of Home Assistant.
+TSX_POST_UPDATE_STEP=${TSX_POST_UPDATE_STEP:-writing the new kernel into boot_a}
+tsx_board_post_update_meaning() {
+	case ${1:-} in
+	1) echo "nothing was written, the running kernel stays";;
+	13|1[0-9]) echo "the A/B state is unknown or slot A could not be armed";;
+	21) echo "boot_a may hold a partial or an old image";;
+	2[2-8]) echo "boot_a changed and the A/B state needs a person";;
+	29) echo "the flash step did not start or failed";;
+	30) echo "a signal ended the flash step, boot_a may be partial";;
+	40) echo "the A/B state does not allow a safe restart";;
+	41) echo "a reviewed boot control file has another sha256, nothing was written";;
+	*) echo "unknown status";;
+	esac
+}
+# A line for tsx-autoupdate status when boot_a does not hold the kernel of the
+# package (read only: uc-pxx-update-boot status, at most 60 s).
+tsx_board_update_status() {
+	[ -x /usr/sbin/uc-pxx-update-boot ] || return 0
+	timeout 60 /usr/sbin/uc-pxx-update-boot status 2>/dev/null | grep -q '^uc-pxx-update-boot: boot_a does NOT hold the kernel of the package$' &&
+		echo "boot_a does not hold the kernel of the package. Run tsx-autoupdate post-update, then restart."
+	return 0
+}
 # The extra lines of the rescue screen (tsx-rescue-status calls this every
 # 2 s, set -u is on): the host name, why the rescue started, and the A/B state
 # from `uc-pxx-bootctl status`. The status command only reads the sector. The

@@ -163,9 +163,13 @@ functions that the shared scripts read. The main values:
 variable and the board hook need a tsx-linux-common that has them (see the
 note in "Where the packages come from").
 
-The function `tsx_board_pre_update` is the board hook of `tsx-autoupdate`. It
-runs `uc-pxx-arm-slot` before `apk upgrade` changes the system
-([boot-control.md](boot-control.md) "The update rule").
+The functions `tsx_board_pre_update` and `tsx_board_post_update` are the
+board hooks of `tsx-autoupdate`. The first runs `uc-pxx-arm-slot` before
+`apk upgrade` changes the system. The second runs `uc-pxx-post-update` after
+`apk upgrade` and before the restart, so a new kernel goes into `boot_a`
+([boot-control.md](boot-control.md) "Kernel updates"). `TSX_POST_UPDATE_STEP`,
+`tsx_board_post_update_meaning` and `tsx_board_update_status` give the text
+of Home Assistant and of `tsx-autoupdate status`.
 
 ### Hardware facts and panel-board.d
 
@@ -408,7 +412,9 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 | Test | Checks |
 |---|---|
 | `rootfs/tests/test-profiles.sh` | The package, service and image file lists of the profiles |
-| `rootfs/tests/test-board.sh` | The board values, the board hook, the MAC address, the model, the key codes and the absence of LED settings |
+| `rootfs/tests/test-board.sh` | The board values, the two board hooks, the MAC address, the model, the key codes and the absence of LED settings |
+| `rootfs/tests/test-post-update.sh` | `uc-pxx-post-update` with stubs: the file check, the arm, the write and the A/B check, and the status for each case |
+| `rootfs/tests/test-autoupdate-hooks.sh` | The board hooks with the real `tsx-autoupdate` of tsx-linux-common (`TSX_COMMON`), the real `uc-pxx-post-update` and stubs: the order arm, upgrade, arm, write, check, restart, no restart after a failed write, the repair of a hold, the lock |
 | `rootfs/tests/test-hw.sh` | `tsx-hw` with a made-up `/sys`: the facts and the layers of `panel-board.d` |
 | `rootfs/tests/test-als.sh` | `uc-pxx-als` and `tsx-als` with a made-up IIO device: counts to lux, the files, the backlight range, a reload |
 | `rootfs/tests/test-loader-key.sh` | The loader mode keys: `uc-pxx-loader-key` (boot window, hold time, `--rescue`), the check in `/init`, the device tree node |

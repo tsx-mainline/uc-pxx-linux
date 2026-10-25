@@ -17,13 +17,15 @@ At every step at least one slot must stay bootable.
 | `uc-pxx-flash-boot` | `/usr/sbin/uc-pxx-flash-boot` | Sets slot A to "trying", writes `boot_a` and checks the data |
 | `uc-pxx-arm-slot` | `/usr/sbin/uc-pxx-arm-slot` | Sets slot A to "trying" before an update changes `system_a` or `boot_a` |
 | `uc-pxx-update-boot` | `/usr/sbin/uc-pxx-update-boot` | Package `uc-pxx-boot-tools` (tsx-aports). Puts the stock resource of `boot_b` into the image of `uc-pxx-kernel-lts` and writes `boot_a` through `uc-pxx-arm-slot` and `uc-pxx-flash-boot`. See below |
+| `uc-pxx-post-update` | `/usr/sbin/uc-pxx-post-update` | The board step of `tsx-autoupdate` after an install: checks the reviewed files, runs `uc-pxx-arm-slot` and `uc-pxx-update-boot write --yes`, and checks the A/B state. See "Kernel updates" |
 
 The service `uc-pxx-boot-ok` starts `uc-pxx-mark-boot` in the background.
 The sources are in this repository:
 `tools/uc-pxx-bootctl/uc-pxx-bootctl.c`,
 `rootfs/overlay/etc/uc-pxx-mark-boot.sh`,
-`rootfs/overlay/usr/sbin/uc-pxx-flash-boot` and
-`rootfs/overlay/usr/sbin/uc-pxx-arm-slot`. The binary is not in the
+`rootfs/overlay/usr/sbin/uc-pxx-flash-boot`,
+`rootfs/overlay/usr/sbin/uc-pxx-arm-slot` and
+`rootfs/overlay/usr/sbin/uc-pxx-post-update`. The binary is not in the
 repository. Build it with `tools/uc-pxx-bootctl/build.sh` (see "Build and
 test"). The package `uc-pxx-boot-tools` installs it.
 
@@ -94,10 +96,10 @@ image uses up its tries, and U-Boot falls back to slot B.
 ### uc-pxx-update-boot
 
 The tool is in the package `uc-pxx-boot-tools` of tsx-aports, not in this
-repository. Its review is in progress. It got GO in round 2 for the sha256
-`4de04b78b8a48a4cf4d79f22f18f2f69a6932a36398e4ba6ec0ac175483b3703`. It is
-not yet in the rules for a unit, so do not run `write` on a unit before that
-entry exists.
+repository. Its review gave GO in round 2 for the sha256
+`4de04b78b8a48a4cf4d79f22f18f2f69a6932a36398e4ba6ec0ac175483b3703`. The
+package pins this sha256, and the safety rules of the unit list it as an
+approved caller. Any other sha256 needs a new review.
 
 The kernel package ships `/boot/uc-pxx-lts.img` without a resource. The
 tool adds the resource:
@@ -143,9 +145,94 @@ when it fails:
 - `uc-pxx-update-boot` (the scripts of the kernel package write nothing)
 - the installer
 
-A plain `apk upgrade` of the kernel package changes `system_a` (the modules
-and `/boot/uc-pxx-lts.img`) without arming slot A. So upgrade the kernel
-package only through `tsx-autoupdate`.
+### Kernel updates
+
+`tsx-autoupdate` writes a new kernel into `boot_a` through the second board
+hook, `tsx_board_post_update`. It runs after `apk upgrade` and before the
+restart, and also after a failed `apk upgrade`. The hook only runs
+`/usr/sbin/uc-pxx-post-update`. That script is in the package
+`uc-pxx-boot-tools`, so one reviewed file holds the whole step. It writes
+nothing itself. In this order it:
+
+1. Checks the reviewed files: `sha256sum -c
+   /usr/share/uc-pxx/boot-control.sha256`, and the sha256 of
+   `uc-pxx-update-boot` must be the reviewed
+   `4de04b78b8a48a4cf4d79f22f18f2f69a6932a36398e4ba6ec0ac175483b3703`. A
+   mismatch gives 41, and nothing is armed or written.
+2. Runs `uc-pxx-arm-slot`, always. So slot A is "trying" {15,7,0} also when
+   `boot_a` already holds the image (for example after a plain `apk
+   upgrade`), and a restart after the step keeps the fallback.
+3. Runs `uc-pxx-update-boot write --yes`. When `boot_a` already holds the
+   image of the kernel package, the tool writes nothing and exits with 0. So
+   the step runs after every install and is safe to run again.
+4. Checks the A/B state with `uc-pxx-bootctl status` (read only).
+   It must show slot A "trying" {15,7,0}, slot B "successful" with priority
+   1 to 14, and `libavb-would-boot: a`. A bad kernel then uses up the tries,
+   and U-Boot falls back to slot B.
+
+Each `uc-pxx-bootctl status` of the script runs under `timeout -s KILL 30`.
+`tsx-autoupdate` ignores SIGTERM while the step runs, and the plain
+`timeout` of busybox sends SIGTERM. A status 1 never ends a hold: after a
+hold, only status 0 does.
+
+The status of the step decides what `tsx-autoupdate` does:
+
+| Step | Status | State | `tsx-autoupdate` |
+|---|---|---|---|
+| All good | 0 | `boot_a` holds the kernel of the package, slot A trying | Restart by the restart rule. U-Boot starts the new kernel with 7 tries |
+| A reviewed file changed | 41 | Nothing armed or written | No restart. Held for a person |
+| `uc-pxx-arm-slot` exits 1, `uc-pxx-bootctl status` reads a valid state | 1 | Nothing written | No restart. The next install tries again. A hold stays a hold |
+| `uc-pxx-arm-slot` exits 1, `uc-pxx-bootctl status` fails (an invalid or unknown sector) | 40 | Nothing written. A restart may fail closed | No restart. Held for a person |
+| `uc-pxx-arm-slot` exits N (not 0 or 1) | 1N (13 = the A/B state is unknown) | Nothing written | No restart. Held for a person |
+| The tool exits 1 or 11 | 1 | Nothing written | No restart. The next install tries again |
+| The tool exits 13 | 13 | The A/B state is unknown | No restart. Held for a person |
+| The tool exits 21 | 21 | Slot A trying. `boot_a` may be partial or old | No restart. Held for a person |
+| The tool exits 23 or 24 | 23, 24 | `boot_a` changed, and the A/B state needs a person | No restart. Held for a person |
+| The tool exits 29 | 29 | The flash wrapper did not start, or exited with 9 or more | No restart. Held for a person |
+| The tool exits 30 | 30 | A signal ended a wrapper. `boot_a` may be partial | No restart. Held for a person |
+| The tool exits with another status | the same | Unknown | No restart. Held for a person |
+| The A/B check fails | 40 | A restart may have no fallback | No restart. Held for a person |
+
+A hold stops every install and restart of `tsx-autoupdate` until a person
+checks the unit and runs `tsx-autoupdate post-update`. Home Assistant shows
+"Update stopped: check the panel" with the step and the meaning of the status
+(`TSX_POST_UPDATE_STEP` and `tsx_board_post_update_meaning` in `board.sh`).
+During a hold and while the step runs, the Restart button of Home Assistant
+and of the panel restarts nothing (`/run/tsx/restart-block`). Only
+`tsx-panelctl reboot --force` on the console restarts then. Because the step
+arms slot A first, `post-update` also repairs a hold 24: the restart after it
+keeps the fallback. A new try after status 1 runs at the
+next install: in the window in the mode `auto`, or with Install.
+
+The panel never restarts by itself after a failed write, for these reasons:
+
+- With status 1 or 11, `boot_a` holds the old kernel, but `apk upgrade`
+  removed the module tree of the old kernel when the release changed. The
+  running kernel keeps the modules that it loaded. A module that it loads
+  later fails. A restart would start the old kernel without its modules.
+- With status 21 or 30, `boot_a` may be partial. A restart uses up the tries
+  of slot A, and U-Boot starts Android in slot B. The running system can
+  still write `boot_a` again.
+- With status 13, 23 or 24, the A/B state needs a person. With 24, `boot_a`
+  holds a new kernel that has not booted, and slot A may be "successful": a
+  bad kernel would then have no fallback.
+- With status 40 or 41, the step cannot prove the fallback, or a reviewed
+  file changed.
+
+A power loss in these states is the same as a restart. So check the unit
+soon after a hold.
+
+A plain `apk upgrade` runs neither hook. It changes `system_a` (the modules
+and `/boot/uc-pxx-lts.img`) without arming slot A, and it does not write
+`boot_a`. So upgrade the kernel package only through `tsx-autoupdate`. After a
+plain `apk upgrade`, run `tsx-autoupdate post-update` (it arms slot A first),
+then reboot. `tsx-autoupdate status` shows the line `boot` while `boot_a`
+does not hold the kernel of the package.
+
+The first upgrade to a `tsx-autoupdate` with this hook runs the old
+`tsx-autoupdate`, which has no hook. So that upgrade writes no kernel. Install
+the new `tsx-autoupdate` before a kernel update, or run `tsx-autoupdate
+post-update` after it.
 
 The installer runs on Android in slot B, where the eMMC has another device
 name. `uc-pxx-bootctl` uses `/dev/mmcblk0`, so it does not work there. The

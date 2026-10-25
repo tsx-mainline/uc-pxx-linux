@@ -53,6 +53,8 @@ jobs:
         run: busybox sh rootfs/tests/test-reboot.sh
       - name: rootfs/tests/test-board.sh - the board file, the MAC address from the cfg partition and the model
         run: sh rootfs/tests/test-board.sh
+      - name: rootfs/tests/test-post-update.sh - uc-pxx-post-update with stubs for the boot control tools
+        run: busybox sh rootfs/tests/test-post-update.sh
       - name: rootfs/tests/test-hw.sh - tsx-hw facts and the layers of panel-board.d with a made-up /sys
         run: sh rootfs/tests/test-hw.sh
       - name: rootfs/tests/test-als.sh - uc-pxx-als and tsx-als with a made-up IIO device (python3)
@@ -98,6 +100,10 @@ jobs:
           TSX_COMMON: ${{ github.workspace }}/tsx-linux-common
       - name: packages/uc-pxx-leds/tests/test-plugin.sh - the LED plugin with a stand-in daemon and fake LEDs
         run: sh packages/uc-pxx-leds/tests/test-plugin.sh
+        env:
+          TSX_COMMON: ${{ github.workspace }}/tsx-linux-common
+      - name: rootfs/tests/test-autoupdate-hooks.sh - the board hooks with tsx-autoupdate (SKIPPED with a tsx-autoupdate that has no post-update hook)
+        run: sh rootfs/tests/test-autoupdate-hooks.sh
         env:
           TSX_COMMON: ${{ github.workspace }}/tsx-linux-common
 

@@ -1,0 +1,96 @@
+#!/bin/sh
+# uc-pxx-post-update — the board step of tsx-autoupdate after apk upgrade (board.sh tsx_board_post_update runs
+# it, also `tsx-autoupdate post-update` by hand). It puts the kernel of the package uc-pxx-kernel-lts into
+# boot_a and says if a restart is safe. It writes nothing itself: it only runs the reviewed programs.
+#   1. Check the reviewed files: sha256sum -c /usr/share/uc-pxx/boot-control.sha256, and the sha256 of
+#      uc-pxx-update-boot must be the reviewed one (TOOL_SHA). Else nothing is armed or written.
+#   2. uc-pxx-arm-slot: slot A to "trying" {15,7,0}, always (also when boot_a already holds the image), so a
+#      restart after this step keeps the fallback to slot B.
+#   3. uc-pxx-update-boot write --yes: writes boot_a through uc-pxx-arm-slot and uc-pxx-flash-boot, or writes
+#      nothing when boot_a already holds the image of the package.
+#   4. The restart check (read only): uc-pxx-bootctl status must show A{prio 15 tries 7 succ 0}, B successful
+#      with priority 1 to 14, and libavb-would-boot: a.
+# Each uc-pxx-bootctl status runs under timeout -s KILL 30: tsx-autoupdate ignores SIGTERM around this script,
+# and an ignored signal is inherited, so a plain timeout (SIGTERM) could not stop a read that hangs.
+# Exit (the rule of tsx-autoupdate: 0 restart, 1 try again later, other = hold for a person):
+#   0   boot_a holds the kernel of the package and the restart check passed
+#   1   nothing was written: uc-pxx-arm-slot refused (its 1) and uc-pxx-bootctl status still reads a valid
+#       A/B state, or the tool exited 1 or 11
+#   1N  uc-pxx-arm-slot exited with N (N is not 0 or 1; 13 = the A/B state is unknown)
+#   N   any other status N of uc-pxx-update-boot (13, 2N, 29, 30, 2, 127 ...): see its header
+#   40  the restart check failed, or uc-pxx-arm-slot refused and the A/B state cannot be read (an invalid or
+#       unknown sector): do not restart
+#   41  a reviewed file has another sha256: nothing was armed or written
+set -u
+LIST=/usr/share/uc-pxx/boot-control.sha256 ARM=/usr/sbin/uc-pxx-arm-slot TOOL=/usr/sbin/uc-pxx-update-boot BOOTCTL=/usr/sbin/uc-pxx-bootctl
+# uc-pxx-update-boot as reviewed (UPDATE-BOOT-REVIEW round 2). A new sha256 needs a new review.
+TOOL_SHA=4de04b78b8a48a4cf4d79f22f18f2f69a6932a36398e4ba6ec0ac175483b3703
+
+say() { echo "uc-pxx-post-update: $*"; echo "uc-pxx-post-update: $*" > /dev/kmsg 2>/dev/null; return 0; }
+
+# 1. the reviewed files
+if ! sha256sum -c "$LIST"; then
+	say "a reviewed file does not match $LIST. Nothing armed or written. Do NOT restart before a person checks."
+	exit 41
+fi
+got=$(sha256sum "$TOOL" 2>/dev/null | cut -c1-64)
+if [ "$got" != "$TOOL_SHA" ]; then
+	say "$TOOL has sha256 ${got:-none}, the reviewed tool is $TOOL_SHA. Nothing armed or written."
+	exit 41
+fi
+
+# 2. arm slot A
+"$ARM"
+rc=$?
+case $rc in
+0) ;;
+1)
+	# A refusal is a "try again later" only while the A/B state reads as valid. uc-pxx-bootctl also refuses
+	# on an invalid sector, and a restart then fails closed: that needs a person.
+	st=$(timeout -s KILL 30 "$BOOTCTL" status 2>&1)
+	src=$?
+	if [ $src -ne 0 ]; then
+		say "uc-pxx-arm-slot refused (1), and uc-pxx-bootctl status fails (exit $src). Nothing written. Do NOT restart and do NOT switch off: the A/B state needs a person."
+		printf '%s\n' "$st"
+		exit 40
+	fi
+	say "uc-pxx-arm-slot refused (1). Nothing written. The A/B state reads as valid. The running kernel stays. Try again later."
+	exit 1;;
+*)
+	[ "$rc" -gt 9 ] && rc=9
+	say "uc-pxx-arm-slot exited with $rc. Nothing written. Do NOT restart: the A/B state needs a person."
+	exit $((10 + rc));;
+esac
+
+# 3. write boot_a (or nothing, when it already holds the image)
+"$TOOL" write --yes
+rc=$?
+case $rc in
+0) ;;
+1|11)
+	say "uc-pxx-update-boot exited with $rc. boot_a was not written. The running kernel stays. Try again later."
+	exit 1;;
+*)
+	say "uc-pxx-update-boot exited with $rc. Do NOT restart and do NOT switch off: boot_a may be partial or the A/B state needs a person."
+	exit "$rc";;
+esac
+
+# 4. the restart check
+st=$(timeout -s KILL 30 "$BOOTCTL" status 2>&1)
+rc=$?
+ok=0
+if [ $rc -eq 0 ]; then
+	case $st in *"libavb-would-boot: a"*) ok=1;; esac
+	case $st in
+	*"current: A{prio 15 tries 7 succ 0} B{prio "[1-9]" tries 0 succ 1}"*) ;;
+	*"current: A{prio 15 tries 7 succ 0} B{prio 1"[0-4]" tries 0 succ 1}"*) ;;
+	*) ok=0;;
+	esac
+fi
+if [ $ok = 1 ]; then
+	say "boot_a holds the kernel of the package. Slot A is trying {15,7,0}, slot B is successful: a restart keeps the fallback."
+	exit 0
+fi
+say "the restart check failed (uc-pxx-bootctl status exit $rc). Do NOT restart. Check uc-pxx-bootctl status."
+printf '%s\n' "$st"
+exit 40
