@@ -14,7 +14,8 @@ holds no such file. Give your own.
 
 Layout, as in the Rockchip struct resource_img_hdr:
   header block (512 bytes): "RSCE", u16 version, u16 index version,
-      u8 header blocks, u8 table offset blocks, u8 entry blocks, u32 entry count
+      u8 header blocks, u8 table offset blocks, u8 entry blocks, one pad byte,
+      u32 entry count (at byte 12)
   one 512 byte entry for each file: "ENTR", name (256 bytes), u32 offset
       (in 512 byte blocks from the start of the image), u32 size
   the file data, each file padded to 512 bytes
@@ -31,7 +32,8 @@ def build(items):
     """Return the image bytes for a list of (name, data) pairs."""
     hdr = bytearray(BLOCK)
     hdr[0:4] = b"RSCE"
-    struct.pack_into("<HHBBBI", hdr, 4, 0, 0, 1, 1, 1, len(items))
+    struct.pack_into("<HHBBB", hdr, 4, 0, 0, 1, 1, 1)
+    struct.pack_into("<I", hdr, 12, len(items))
     entries = bytearray()
     data = bytearray()
     off = 1 + len(items)

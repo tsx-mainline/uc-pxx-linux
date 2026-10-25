@@ -17,7 +17,11 @@ python3 -I - "$T/out.img" "$T/a" "$T/b" <<'PY' && ok "the image has the layout o
 import struct, sys
 img = open(sys.argv[1], "rb").read()
 assert img[0:4] == b"RSCE", "magic"
-count = struct.unpack_from("<I", img, 11)[0]
+# byte 11 is a pad byte and the u32 entry count starts at byte 12, as in the
+# header of the stock resource (u8 header, table and entry blocks at 8 to 10)
+assert struct.unpack_from("<BBB", img, 8) == (1, 1, 1), "block fields"
+assert img[11] == 0, "pad byte"
+count = struct.unpack_from("<I", img, 12)[0]
 assert count == 2, "entry count %d" % count
 want = {"rk-kernel.dtb": open(sys.argv[2], "rb").read(), "logo.bmp": open(sys.argv[3], "rb").read()}
 for i in range(count):
