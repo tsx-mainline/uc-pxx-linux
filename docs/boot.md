@@ -30,8 +30,10 @@ eMMC is used in each phase. Read it before you write anything to a unit.
 7. The initramfs mounts the root file system of the slot, and OpenRC starts
    the services.
 
-U-Boot does not relocate the kernel and passes no device tree (register `x0`
-is 0). So the shim does the work of a bootloader.
+U-Boot does not relocate the kernel. On a boot from a slot it passes its own
+device tree in `x0`. On a `fastboot boot` `x0` is 0. Linux cannot use the
+U-Boot device tree. So the shim does the work of a bootloader. See "What
+U-Boot passes to the kernel".
 
 ## The boot image
 
@@ -55,6 +57,58 @@ prints progress on UART2 and jumps to Linux with the device tree address in
 The kernel command line comes from the device tree node `/chosen/bootargs`.
 The shim hands its own device tree to Linux, so the command line in the image
 header has no effect.
+
+### What U-Boot passes to the kernel
+
+On a boot from a slot, the vendor U-Boot passes a device tree in `x0`. It is
+`rk-kernel.dtb` of the resource in `second`, with the changes of U-Boot. It
+lies at about `0xe9dba000`, below the ramdisk. U-Boot adds these parts
+(measured on a UC-P10 with the stock resource):
+
+- `/memreserve/` entries for this device tree and for the ramdisk.
+- `/serial-number`, the serial number of the unit.
+- `/memory`: the banks `0x200000` (size `0x8200000`) and `0xa200000` (size
+  `0xede00000`).
+- `/chosen`: `linux,initrd-start`, `linux,initrd-end` and `bootargs`.
+- The logo and video timing properties of the display route, the address of
+  the logo in its reserved memory, and a `local-mac-address` for the
+  Ethernet node. That address is locally administered. It is not the MAC
+  address of the `cfg` partition.
+
+`/chosen/bootargs` has these words (values in angle brackets differ per unit
+or per build):
+
+```
+storagemedia=emmc androidboot.mode=normal lcdid=1 fuse.programmed=1
+dm="1 vroot none ro 1,0 ... verity 1 ..." root=/dev/dm-0
+androidboot.vbmeta.device=PARTUUID=<uuid> androidboot.vbmeta.avb_version=1.1
+androidboot.vbmeta.device_state=unlocked androidboot.vbmeta.hash_alg=sha256
+androidboot.vbmeta.size=<size> androidboot.vbmeta.digest=<sha256>
+androidboot.vbmeta.invalidate_on_error=yes androidboot.veritymode=enforcing
+androidboot.verifiedbootstate=orange skip_initramfs androidboot.slot_suffix=_a
+androidboot.serialno=<serial> console=ttyFIQ0 rdinit=/init
+earlycon=uart8250,mmio32,0xff1a0000 swiotlb=1 androidboot.baseband=N/A
+androidboot.hardware=rk30board androidboot.console=ttyFIQ0 init=/init
+rootfstype=ext4
+```
+
+The `dm=` part is the verity table of `system` of the slot (from vbmeta).
+`androidboot.vbmeta.device_state` follows the unlock state of the unit.
+
+The shim copies this string into `/chosen/u-boot,bootargs` of our device
+tree, so the running system can read it:
+
+```
+tr '\0' '\n' < /proc/device-tree/chosen/u-boot,bootargs
+```
+
+The kernel ignores the property, and our command line stays as it is. The
+copy changes nothing in our device tree when U-Boot passed none, and when a
+check fails. The code inserts the property as the first one of `/chosen`. It
+reads and writes words only at aligned places, because the MMU is off.
+
+On a `fastboot boot` U-Boot passes no device tree (`x0` is 0) and so no
+command line. The kernel of a RAM boot has no `u-boot,bootargs`.
 
 The resource in `second` is for U-Boot only. Its device tree has no PMIC
 nodes. So the regulator code of U-Boot does not touch the PMIC and the

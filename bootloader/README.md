@@ -1,8 +1,10 @@
 # Shim
 
 The UC-P10 has no bootloader of our own. The vendor U-Boot starts the kernel
-of the boot image and gives it no device tree. The file `shim.S` is the small
-program that fills this gap. It is our own code under GPL-2.0-or-later.
+of the boot image where it loaded it. It passes its own device tree (on a
+boot from a slot) or none (on a `fastboot boot`). The file `shim.S` is the
+small program that fills this gap. It is our own code under
+GPL-2.0-or-later.
 
 ## What it does
 
@@ -15,9 +17,18 @@ Image, and it has three parts:
 | 64 KiB | The device tree |
 | 2 MiB | The Linux Image |
 
-At start the stub prints a few lines on UART2, copies the Linux Image to its
-final address and jumps to it. Register `x0` holds the address of the device
-tree. The boot chain is in [../docs/boot.md](../docs/boot.md).
+At start the stub prints a few lines on UART2 and copies the Linux Image to
+its final address. Then it copies `/chosen/bootargs` of the U-Boot device
+tree into the new property `/chosen/u-boot,bootargs` of our device tree, if
+U-Boot passed one. The line `u-boot args 0x...` on UART2 shows the result
+(0 copied, 1 no device tree from U-Boot, 2 no `bootargs` in it, 3 our device
+tree is not usable, 4 no room or too long, 5 already there). Then the stub
+jumps to Linux. Register `x0` holds the address of our device tree. The boot
+chain is in [../docs/boot.md](../docs/boot.md).
+
+`kernel/tests/test-shim-fdt.sh` tests the device tree code under
+qemu-aarch64. It assembles only that part of `shim.S`
+(`UC_PXX_SHIM_FDT_TEST`).
 
 ## Build
 
