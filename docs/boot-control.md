@@ -16,7 +16,7 @@ At every step at least one slot must stay bootable.
 | `uc-pxx-mark-boot` | `/etc/uc-pxx-mark-boot.sh` | Marks slot A as good after a healthy boot |
 | `uc-pxx-flash-boot` | `/usr/sbin/uc-pxx-flash-boot` | Sets slot A to "trying", writes `boot_a` and checks the data |
 | `uc-pxx-arm-slot` | `/usr/sbin/uc-pxx-arm-slot` | Sets slot A to "trying" before an update changes `system_a` or `boot_a` |
-| `uc-pxx-update-boot` | | Wraps `uc-pxx-flash-boot` for the package update. Not written yet |
+| `uc-pxx-update-boot` | `/usr/sbin/uc-pxx-update-boot` | Package `uc-pxx-boot-tools` (tsx-aports). Puts the stock resource of `boot_b` into the image of `uc-pxx-kernel-lts` and writes `boot_a` through `uc-pxx-arm-slot` and `uc-pxx-flash-boot`. See below |
 
 The service `uc-pxx-boot-ok` starts `uc-pxx-mark-boot` in the background.
 The sources are in this repository:
@@ -25,7 +25,7 @@ The sources are in this repository:
 `rootfs/overlay/usr/sbin/uc-pxx-flash-boot` and
 `rootfs/overlay/usr/sbin/uc-pxx-arm-slot`. The binary is not in the
 repository. Build it with `tools/uc-pxx-bootctl/build.sh` (see "Build and
-test"). The package `uc-pxx-boot-tools` must install it.
+test"). The package `uc-pxx-boot-tools` installs it.
 
 ### uc-pxx-bootctl
 
@@ -91,6 +91,25 @@ the exact state. Only after that it writes `boot_a`, reads the data back and
 compares the checksum. At the end it arms slot A to "trying" again. A bad new
 image uses up its tries, and U-Boot falls back to slot B.
 
+### uc-pxx-update-boot
+
+The tool is in the package `uc-pxx-boot-tools` of tsx-aports, not in this
+repository. Its review is in progress. It got GO in round 2 for the sha256
+`4de04b78b8a48a4cf4d79f22f18f2f69a6932a36398e4ba6ec0ac175483b3703`. It is
+not yet in the rules for a unit, so do not run `write` on a unit before that
+entry exists.
+
+The kernel package ships `/boot/uc-pxx-lts.img` without a resource. The
+tool adds the resource:
+
+- `uc-pxx-update-boot write` takes the resource from `boot_b`, puts it into
+  the image and writes `boot_a` through `uc-pxx-arm-slot` and
+  `uc-pxx-flash-boot`. It opens the block devices read only. It accepts only
+  the stock resource (see "The boot image rule").
+- `uc-pxx-update-boot extract BOOTIMG OUT` and `assemble TEMPLATE RES OUT`
+  work offline, on files. They touch no device. A host installer can use
+  them on a dump of `boot_b`.
+
 ### uc-pxx-arm-slot
 
 ```
@@ -121,13 +140,28 @@ when it fails:
   the check found packages and before `apk upgrade`. If the hook exits with a
   non-zero status, `tsx-autoupdate` does not install. It logs the status and
   keeps the packages pending. A check alone never calls the hook
-- the post-install script of the kernel package
+- `uc-pxx-update-boot` (the scripts of the kernel package write nothing)
 - the installer
-- `uc-pxx-update-boot`
+
+A plain `apk upgrade` of the kernel package changes `system_a` (the modules
+and `/boot/uc-pxx-lts.img`) without arming slot A. So upgrade the kernel
+package only through `tsx-autoupdate`.
 
 The installer runs on Android in slot B, where the eMMC has another device
 name. `uc-pxx-bootctl` uses `/dev/mmcblk0`, so it does not work there. The
 installer needs its own reviewed way to arm slot A.
+
+## The boot image rule
+
+Every `boot_a` image must carry the stock resource, with the sha256
+`290ef40577d434d702c3544076dbebd6ddd17e16087eff0e84c92549d67bb363`. U-Boot
+reads `rk-kernel.dtb` from the resource of `boot_a` and starts again from it
+right after it reads the A/B state. We did not verify that the tries are
+counted before that point. A bad resource can hang U-Boot at every reset, and
+then slot B is never tried. `uc-pxx-flash-boot` does not check the resource.
+So check it before each write: read the header, then compute the sha256 of
+the `second` part. Never write an image without a resource, for example
+`/boot/uc-pxx-lts.img` as the package ships it.
 
 ## The flash rule
 
@@ -138,6 +172,12 @@ write `boot_a` in another way, arm slot A to "trying" first.
 Do not write the A/B metadata, the idbloader, the GPT, `uboot_*`, `trust_*`
 or `vbmeta_*` in any other way. The tools above are the only reviewed ways
 to write sector 49156.
+
+## RAM boots
+
+A RAM boot (`fastboot boot`) runs the hook too. When slot A is already
+successful, the hook logs "boot marked successful (or already was)" even
+for a foreign token. `uc-pxx-bootctl` writes nothing in this case.
 
 ## Off switches
 

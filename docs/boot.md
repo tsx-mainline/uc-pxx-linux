@@ -114,17 +114,25 @@ The resource in `second` is for U-Boot only. Its device tree has no PMIC
 nodes. So the regulator code of U-Boot does not touch the PMIC and the
 voltage regulators. This repository does not hold the resource, because it
 derives from vendor files. `kernel/mkimage.sh` takes its path as a required
-argument. `kernel/mkresource.py` packs a device tree into a resource.
+argument. `kernel/mkresource.py` packs a device tree into a resource. The
+boot path does not use it: the image always carries the stock resource.
 
 The kernel never reads the resource: the shim gives the kernel its own
 device tree. So the resource changes only what U-Boot does. The stock
 resource of the unit (`rk-kernel.dtb`, `logo.bmp` and `logo_kernel.bmp`) makes
-U-Boot show the Crestron logo, as the factory image does. The installer
-must take that resource from the unit itself at install time: it reads the
-`second` part of the stock boot image in `boot_b` (the sizes and the page
-size come from the boot image header) and gives the file to
-`kernel/mkimage.sh --resource`. So no vendor file ships. This installer
-step is not written yet.
+U-Boot show the Crestron logo, as the factory image does. Every
+`boot_a` image must carry the stock resource (sha256 `290ef405...`, the full
+value is in [boot-control.md](boot-control.md) "The boot image rule"). U-Boot
+reads `rk-kernel.dtb` from it before the tries may be counted.
+
+The resource comes from the unit itself, so no vendor file ships. The
+package `uc-pxx-kernel-lts` ships `/boot/uc-pxx-lts.img` without a resource.
+On the panel, `uc-pxx-update-boot write` reads the `second` part of the stock
+boot image in `boot_b`, puts it into the image and writes `boot_a`. A host
+installer can run `uc-pxx-update-boot extract BOOTIMG OUT` on a dump of
+`boot_b`, then `assemble TEMPLATE RES OUT`. The result is the same as
+`kernel/mkimage.sh --resource RES`. The tool is in the package
+`uc-pxx-boot-tools` of tsx-aports. Its review is in progress.
 
 With the stock resource, U-Boot leaves the VOP scanning the logo when it
 starts the kernel. U-Boot decodes the logo into the display pool of its
