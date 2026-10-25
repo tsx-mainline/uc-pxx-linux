@@ -132,6 +132,13 @@ cols=$(awk '{ if (length > m) m = length } END { print m + 0 }' "$T/frame")
 printf '#!/bin/sh\necho x >> "%s/calls"\necho "uc-pxx-bootctl: current: A{prio 15 tries 7 succ 0} B{prio 14 tries 0 succ 1} crc 0" >&2\n' "$T" > "$T/bootctl"
 rm -f "$T/run/uc-pxx-ab-state" "$T/calls"; render; render; render
 eq "$(wc -l < "$T/calls" | tr -d ' ')" 1 "three draws read the A/B state once"
+# the clock of the rescue starts at 0 (no RTC): with no cache file the first draw reads the state
+mkdir -p "$T/epoch"
+printf '#!/bin/sh\n[ "$1" = +%%s ] && { echo 30; exit 0; }\nexec /bin/date "$@"\n' > "$T/epoch/date"; chmod 755 "$T/epoch/date"
+printf '#!/bin/sh\necho x >> "%s/calls"\necho "uc-pxx-bootctl: current: A{prio 15 tries 7 succ 0} B{prio 14 tries 0 succ 1} crc 0"\n' "$T" > "$T/bootctl"
+rm -f "$T/run/uc-pxx-ab-state" "$T/calls"; PATH=$T/epoch:$PATH render
+eq "$(wc -l < "$T/calls" 2>/dev/null | tr -d ' ')" 1 "clock at 30 s and no cache file: the first draw reads the A/B state"
+want '^slot A       : priority 15, tries 7, successful 0$' "and shows the slots, not \"cannot read\""
 
 echo "== the console font for the turned 1200x1920 panel =="
 CF=$COMMON/rescue/usr/sbin/tsx-confont

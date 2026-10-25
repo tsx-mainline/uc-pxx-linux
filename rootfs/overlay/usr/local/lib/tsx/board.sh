@@ -191,8 +191,11 @@ tsx_board_rescue_extra() {
 	_tb_bc=${TSX_BOOTCTL:-/usr/sbin/uc-pxx-bootctl}
 	[ -x "$_tb_bc" ] || return 0
 	_tb_f=$_tb_run/uc-pxx-ab-state
+	# Read the state again after 60 s. Also read it when there is no cache file:
+	# the rescue has no RTC and its clock starts at 0, so the age test alone
+	# would show "cannot read" for the first minute.
 	_tb_now=$(date +%s); _tb_mt=$(stat -c %Y "$_tb_f" 2>/dev/null || echo 0)
-	if [ "$_tb_now" -lt "$_tb_mt" ] || [ $((_tb_now - _tb_mt)) -gt 60 ]; then
+	if [ ! -e "$_tb_f" ] || [ "$_tb_now" -lt "$_tb_mt" ] || [ $((_tb_now - _tb_mt)) -gt 60 ]; then
 		_tb_o=$(timeout 10 "$_tb_bc" status 2>&1); _tb_rc=$?
 		{ echo "rc=$_tb_rc"; printf '%s\n' "$_tb_o"; } > "$_tb_f.new" 2>/dev/null && mv "$_tb_f.new" "$_tb_f"
 	fi
