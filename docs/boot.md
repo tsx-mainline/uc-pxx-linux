@@ -62,6 +62,16 @@ voltage regulators. This repository does not hold the resource, because it
 derives from vendor files. `kernel/mkimage.sh` takes its path as a required
 argument. `kernel/mkresource.py` packs a device tree into a resource.
 
+The kernel never reads the resource: the shim gives the kernel its own
+device tree. So the resource changes only what U-Boot does. The stock
+resource of the unit (`rk-kernel.dtb`, `logo.bmp` and `logo_kernel.bmp`) makes
+U-Boot show the Crestron logo, as the factory image does. The installer
+must take that resource from the unit itself at install time: it reads the
+`second` part of the stock boot image in `boot_b` (the sizes and the page
+size come from the boot image header) and gives the file to
+`kernel/mkimage.sh --resource`. So no vendor file ships. This installer
+step is not written yet.
+
 The build token is the same string in two places: the name field of the boot
 image header, and the word `uc-pxx.id=TOKEN` that `kernel/mkimage.sh` adds to
 `/chosen/bootargs` of the embedded device tree. The boot-marking hook reads
