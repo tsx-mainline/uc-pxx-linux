@@ -1,0 +1,18 @@
+#!/sbin/openrc-run
+# Keep the boot clock at or after the clock floor (uc-pxx-clock boot). The
+# service hwclock sets the clock from the RTC first. After a power cut the
+# RTC reads 2013. This service then moves the clock to the floor and writes
+# the RTC.
+description="Clock floor after the RTC (uc-pxx-clock)"
+depend() {
+	need localmount
+	after hwclock clock
+	before chronyd ntp-client tsx-data
+}
+start() {
+	ebegin "Clock floor"
+	/usr/local/sbin/uc-pxx-clock boot 2>&1 | while read -r l; do
+		einfo "  $l"; logger -t uc-pxx-clock "${l#uc-pxx-clock: }"
+	done
+	eend 0
+}

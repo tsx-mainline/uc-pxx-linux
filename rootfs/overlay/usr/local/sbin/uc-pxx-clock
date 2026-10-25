@@ -1,0 +1,55 @@
+#!/bin/sh
+# uc-pxx-clock boot: keep the boot clock at or after the clock floor.
+#
+# The OpenRC service hwclock sets the system clock from the RTC of the RK808
+# (UTC). The RTC keeps the time over a reboot, but it has no backup battery:
+# after a power cut it reads a date in 2013. The floor is the mtime of
+# /var/lib/misc/openrc-shutdowntime. The image ships it with its build time,
+# and tsx-savetime (tsx-base) keeps it current while NTP has the time.
+#
+# If the system clock is before the floor, the program sets it to the floor
+# and writes the RTC (hwclock -w -u). So the RTC holds a sane time from then
+# on. Else it changes nothing. It never sets the clock back.
+#
+#   uc-pxx-clock boot     the check above
+#   uc-pxx-clock status   show the system clock, the RTC and the floor
+#
+# Env (test hooks): UC_PXX_CLOCK_FLOOR (the floor file), UC_PXX_CLOCK_NOW (the
+# system clock in seconds), UC_PXX_DATE (default date), UC_PXX_HWCLOCK
+# (default hwclock).
+set -eu
+FLOOR=${UC_PXX_CLOCK_FLOOR:-/var/lib/misc/openrc-shutdowntime}
+DATE=${UC_PXX_DATE:-date}
+HWCLOCK=${UC_PXX_HWCLOCK:-hwclock}
+say() { echo "uc-pxx-clock: $*"; }
+
+now() { if [ -n "${UC_PXX_CLOCK_NOW:-}" ]; then echo "$UC_PXX_CLOCK_NOW"; else date +%s; fi; }
+floor() { [ -e "$FLOOR" ] && stat -c %Y "$FLOOR"; }
+utc() { date -u -d "@$1" '+%Y-%m-%d %H:%M:%S UTC' 2>/dev/null || echo "@$1"; }
+
+boot() {
+	f=$(floor) || { say "no $FLOOR: the clock stays as it is"; return 0; }
+	n=$(now)
+	if [ "$n" -ge "$f" ]; then
+		say "the clock $(utc "$n") is after the floor $(utc "$f"): no change"
+		return 0
+	fi
+	say "the clock $(utc "$n") is before the floor $(utc "$f") (RTC not set, or a power cut)"
+	if $DATE -u -s "@$f" >/dev/null; then say "set the clock to $(utc "$f")"
+	else say "cannot set the clock"; return 0; fi
+	if $HWCLOCK -w -u 2>/dev/null; then say "wrote the RTC"
+	else say "cannot write the RTC"; fi
+	return 0
+}
+
+status() {
+	echo "system  $(utc "$(now)")"
+	echo "rtc     $($HWCLOCK -r -u 2>/dev/null || echo unreadable)"
+	f=$(floor) && echo "floor   $(utc "$f")" || echo "floor   none ($FLOOR)"
+}
+
+case "${1:-}" in
+boot) boot;;
+status) status;;
+*) echo "usage: uc-pxx-clock boot | status" >&2; exit 2;;
+esac

@@ -149,10 +149,12 @@ mkdir -p $R/data   # the data partition's mount point (fstab, tsx-data)
 printf '%s\n' "$TSX_APK_URL" > $R/etc/tsx/apk-url.default
 # build id for tsx-autoupdate / the HA update entity (installed_version)
 printf '%s\n' "${TSX_BUILD_ID:-$(date -u +%Y%m%d%H%M)}" > $R/etc/tsx/build-id
-# The floor of the boot clock. The RTC of the RK808 has no backup battery and
-# reads a date in 2013 at boot. The service swclock sets the clock from the
-# mtime of this file. So a new image never boots earlier than its build time
-# (/etc/periodic/15min/tsx-savetime keeps it current while NTP has the time)
+# The floor of the boot clock. The service hwclock sets the clock from the
+# RTC of the RK808. The RTC keeps the time over a reboot, but it has no backup
+# battery and reads a date in 2013 after a power cut. Then uc-pxx-clock sets
+# the clock to the mtime of this file and writes the RTC. So a new image never
+# boots earlier than its build time (/etc/periodic/15min/tsx-savetime keeps
+# the file current while NTP has the time)
 mkdir -p $R/var/lib/misc && touch $R/var/lib/misc/openrc-shutdowntime
 if has step lva; then
 log "Home Assistant device (tsx-esphome) and voice satellite (linux-voice-assistant)"
@@ -219,7 +221,7 @@ case " $TSX_USERS " in *" tsx-setup "*)
 	getent passwd tsx-setup >/dev/null || adduser -D -H -s /sbin/nologin -g "on-panel setup page" tsx-setup;;
 esac
 for s in devfs dmesg udev udev-trigger udev-settle; do rc-update add $s sysinit; done
-for s in root localmount modules sysctl hostname bootmisc syslog swclock seedrng udev-postmount machine-id $TSX_SVC_BOOT; do
+for s in root localmount modules sysctl hostname bootmisc syslog hwclock seedrng udev-postmount machine-id $TSX_SVC_BOOT; do
 	[ -e /etc/init.d/$s ] && rc-update add $s boot || { echo "MISSING boot service $s"; exit 1; }
 done
 for s in $TSX_SVC_DEFAULT; do

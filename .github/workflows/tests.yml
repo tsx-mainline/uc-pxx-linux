@@ -55,6 +55,8 @@ jobs:
         run: sh rootfs/tests/test-audio.sh
       - name: rootfs/tests/test-firmware.sh - uc-pxx-firmware with a made-up vendor folder
         run: sh rootfs/tests/test-firmware.sh
+      - name: rootfs/tests/test-clock.sh - uc-pxx-clock and the write-back sysctl
+        run: sh rootfs/tests/test-clock.sh
       - name: rootfs/tests/test-switch.sh - uc-pxx-switch with stub tools
         run: sh rootfs/tests/test-switch.sh
       - name: rootfs/tests/test-watchdog.sh - watchdog service timeout and interval checks

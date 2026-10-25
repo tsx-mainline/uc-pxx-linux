@@ -211,6 +211,7 @@ All services of this family start with `uc-pxx-`.
 | Service | Runlevel | State |
 |---|---|---|
 | `uc-pxx-lvm` | boot | Done. Activates the data volume |
+| `uc-pxx-clock` | boot | Keeps the boot clock at or after the clock floor, after `hwclock`. See "Clock" |
 | `uc-pxx-watchdog` | boot | Done. Feeds `/dev/watchdog0` with the busybox watchdog |
 | `uc-pxx-firmware` | boot | Copies the Wi-Fi and Bluetooth files from the vendor partition and starts their drivers again. See "Firmware" |
 | `uc-pxx-switch` | boot | Sets the MAC address and starts the Ethernet switch. Not tested in this form |
@@ -219,6 +220,27 @@ All services of this family start with `uc-pxx-`.
 | `uc-pxx-presence` | default | Done. Reads the PIR switch and writes the presence state. See "Presence" |
 | `uc-pxx-als` | default | Done. Reads the light sensor and feeds the automatic brightness. See "Ambient light" |
 | `uc-pxx-leds` | default | The LED daemon, from the package `uc-pxx-leds`. It owns the four indicators and the RGB status LED, and shows the boot state. See [leds.md](leds.md) |
+
+### Clock
+
+The image uses the OpenRC service `hwclock` (UTC) in the boot runlevel, not
+`swclock`. The RTC of the RK808 (`rtc0`) keeps the time over a reboot. It has
+no backup battery, so after a power cut it reads a date in 2013. The kernel
+does not copy the RTC to the system time (`RTC_HCTOSYS` is off), so only
+`hwclock` reads it.
+
+`uc-pxx-clock` runs after `hwclock`. The clock floor is the mtime of
+`/var/lib/misc/openrc-shutdowntime`: the build time of the image, or a later
+time that `tsx-savetime` (tsx-base) saved while NTP had the time. If the
+system clock is before the floor, `uc-pxx-clock` sets it to the floor and
+writes the RTC. It never sets the clock back. `uc-pxx-clock status` shows the
+system clock, the RTC and the floor.
+
+The chrony configuration of tsx-base has `rtcsync`. While chrony is in sync,
+the kernel copies the system time to the RTC every 11 minutes. `hwclock`
+writes the RTC at a clean shutdown. After `date -s` without NTP, run
+`hwclock -w -u` to keep the time over a reboot. The image adds no NTP server.
+chrony uses the servers of the DHCP lease and the pool.
 
 ### Write-back
 
@@ -379,6 +401,7 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
 | `rootfs/tests/test-presence.sh` | `uc-pxx-presence` with a made-up input device: the find of the switch, the states, the wake call, a reload |
 | `rootfs/tests/test-audio.sh` | `uc-pxx-audio` with a stub `amixer` |
 | `rootfs/tests/test-firmware.sh` | `uc-pxx-firmware` with a made-up vendor folder and a made-up `/sys` |
+| `rootfs/tests/test-clock.sh` | `uc-pxx-clock` with stubs for `date` and `hwclock`, and the write-back sysctl |
 | `rootfs/tests/test-esphome-plugin.sh` | The board plugin `uc-pxx.py` (the switches) against `tsx_panel` of tsx-linux-common |
 | `packages/uc-pxx-leds/tests/test-*.sh` | The LED package: the file list, the daemon, the command and the ESPHome plugin (see [leds.md](leds.md)) |
 | `rootfs/tests/test-switch.sh` | `uc-pxx-switch` with stub tools |
