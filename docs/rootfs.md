@@ -220,6 +220,15 @@ All services of this family start with `uc-pxx-`.
 | `uc-pxx-als` | default | Done. Reads the light sensor and feeds the automatic brightness. See "Ambient light" |
 | `uc-pxx-leds` | default | The LED daemon, from the package `uc-pxx-leds`. It owns the four indicators and the RGB status LED, and shows the boot state. See [leds.md](leds.md) |
 
+### Write-back
+
+`/etc/sysctl.d/uc-pxx-writeback.conf` sets `vm.dirty_expire_centisecs=500`
+and `vm.dirty_writeback_centisecs=100` (defaults 3000 and 500). A PoE panel
+loses its power without a shutdown. With the defaults, written data can stay
+in RAM for up to 35 seconds. A new Home Assistant login in the Local Storage
+of Chromium was lost this way. Now data reaches the eMMC after about 6
+seconds.
+
 ### Ambient light
 
 `uc-pxx-als` reads the JSA1213 through the mainline driver `jsa1212`. The
