@@ -187,6 +187,10 @@ the screen never looks off), `BRIGHTNESS_DAY=240` (the stock default level) and
 shared software uses a square scale. Nobody has tuned these values on the
 glass.
 
+`default.conf` also sets `KIOSK_SCALE=1.5`. The kiosk gives it to Chromium as
+`--force-device-scale-factor`. At scale 1 the text on the 1200x1920 panel is
+too small.
+
 ### MAC address
 
 The MAC address of eth0 is in the `cfg` partition, in bytes 6 to 11. The
