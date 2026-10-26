@@ -1,7 +1,8 @@
-# TEST ONLY: the common packages of a DEV build (UC_PXX_DEV_OVERLAY=1). The
-# profile meta packages uc-pxx-console, -kiosk and -ha do not exist yet. This
-# list holds the common packages that they will pull, the same set as the meta
-# packages of the xx60 (tsx-xx60-console, -kiosk, -ha) without the LED bar.
+# TEST ONLY: the common packages of a DEV build (UC_PXX_DEV_OVERLAY=1). This
+# list holds the common packages that the profile meta packages uc-pxx-console,
+# -kiosk and -ha of tsx-aports pull. Keep it equal to their depends. It is the
+# same set as the meta packages of the xx60 (tsx-xx60-console, -kiosk, -ha)
+# without the LED bar.
 # Format: PROFILE PACKAGE. A profile gets the lines of every profile that it
 # holds (profile.sh includes).
 console tsx-base

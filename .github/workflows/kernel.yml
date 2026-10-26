@@ -7,8 +7,9 @@ on:
 # Builds the kernel at the revision of kernel/KERNEL_REV.lts, with defconfig and
 # arch/arm64/configs/uc-pxx.config. The source is the kernel fork at
 # KERNEL_REPO (ci/build-kernel.sh), so the pinned commit must exist there. The
-# build needs an initramfs. The real one is open, so the job builds with a
-# minimal one. It builds the device trees of both models. The output goes to out-<flavor>
+# build needs an initramfs. The real one needs programs that CI does not build
+# (docs/kernel.md "Build"), so the job builds with a minimal one. It builds the
+# device trees of both models. The output goes to out-<flavor>
 # in the workspace, because actions/upload-artifact refuses a path with "..".
 # The job also runs the tests of the boot image tools.
 jobs:
@@ -43,7 +44,7 @@ jobs:
           path: ../linux-uc-pxx-${{ matrix.flavor }}
           key: linux-uc-pxx-${{ matrix.flavor }}-${{ hashFiles(format('kernel/KERNEL_REV.{0}', matrix.flavor)) }}
 
-      - name: make a minimal initramfs (the real one is open, see README)
+      - name: make a minimal initramfs (the real one needs programs that CI does not build, docs/kernel.md)
         run: |
           mkdir initramfs-root
           printf '#!/bin/sh\n' > initramfs-root/init

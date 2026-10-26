@@ -10,15 +10,12 @@ on:
 # No vendor file is fetched or bundled. uc-pxx-firmware copies the firmware
 # from the unit itself at boot. The last step checks the build output.
 #
-# The rootfs comes from packages (docs/rootfs.md "Build the image"). The
-# published apk tree of this project holds the common packages. It does not
-# hold the board package uc-pxx-board or the profile meta packages, because
-# they are private. So the job fetches the published tree and checks it
-# (rootfs/check-apk-tree.sh). A complete tree gives the rootfs. An incomplete
-# tree gives a warning and ends the job without an image. A release needs the
-# rootfs (release.yml fails without it).
-# TODO: the apk category uc-pxx does not exist in tsx-aports yet. Until it does,
-# the tree is always incomplete.
+# The rootfs comes from packages (docs/rootfs.md "Build the image"). The job
+# fetches the stable tree of tsx-aports, with the categories common and uc-pxx,
+# and checks it (rootfs/check-apk-tree.sh). A complete tree gives the rootfs. A
+# tree without all the packages of the image (for example before tsx-aports
+# publishes the packages of a new board tag) gives a warning and ends the job
+# without an image. A release needs the rootfs (release.yml fails without it).
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -51,14 +48,14 @@ jobs:
       - name: fetch the published apk tree (rootfs/fetch-apk-tree.sh)
         run: rootfs/fetch-apk-tree.sh apk-tree
 
-      - name: check the apk tree for the private packages (rootfs/check-apk-tree.sh)
+      - name: check the apk tree for the packages of the image (rootfs/check-apk-tree.sh)
         id: tree
         run: |
           if rootfs/check-apk-tree.sh apk-tree ha; then
             echo "complete=yes" >> "$GITHUB_OUTPUT"
           else
             echo "complete=no" >> "$GITHUB_OUTPUT"
-            echo "::warning title=no rootfs image::The published apk tree lacks private packages (uc-pxx-board and the profile package). This run builds no image."
+            echo "::warning title=no rootfs image::The published apk tree lacks packages of the image (the list is above). This run builds no image."
           fi
 
       - name: build the rootfs from packages (rootfs/build-rootfs.sh rootfs)

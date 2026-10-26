@@ -34,8 +34,8 @@
 #               the rootfs. The binary links with the Realtek SDK and is not
 #               part of this repository.
 #   UC_PXX_DEV_OVERLAY  TEST ONLY. 1 builds the rootfs without the uc-pxx
-#               packages, which do not exist yet (docs/rootfs.md "Test build
-#               without the uc-pxx packages"). The image then gets the Alpine
+#               packages, from the files of this repository (docs/rootfs.md
+#               "Test build without the uc-pxx packages"). The image gets the Alpine
 #               packages, the common packages of dev/common-packages.list, the
 #               files of rootfs/overlay and packages/uc-pxx-leds/root,
 #               UC_PXX_BOOTCTL and RTL8363_INIT. Never publish such an image.
@@ -67,7 +67,7 @@
 #               from rootfs/fetch-apk-tree.sh. The build installs the profile
 #               meta package (uc-pxx-console, -kiosk or -ha), the packages of
 #               packages-tsx.txt and the Alpine packages of packages.txt from
-#               it. Nothing is compiled. The tree must hold the private
+#               it. Nothing is compiled. The tree must hold the board
 #               package uc-pxx-board. rootfs/check-apk-tree.sh stops the build
 #               when it does not (docs/rootfs.md "Build the image").
 #   TSX_COMMON  a checkout of tsx-linux-common (default: ../tsx-linux-common

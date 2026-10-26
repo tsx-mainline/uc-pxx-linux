@@ -51,8 +51,9 @@ initramfs` makes it ([boot.md](boot.md) "The boot initramfs").
 
 ## Test build without the uc-pxx packages
 
-The packages of the category `uc-pxx` do not exist yet. A test build can use
-the files of this repository instead. Never publish such an image.
+A test build can use the files of this repository instead of the packages of
+the category `uc-pxx`, for example to test a change before a package has it.
+Never publish such an image.
 
 ```sh
 UC_PXX_DEV_OVERLAY=1 PROFILE=console TSX_APK_LOCAL=$PWD/apk-tree \
@@ -102,16 +103,30 @@ lists only these two repositories.
 | `uc-pxx-boot-tools` | The boot-control tools ([boot-control.md](boot-control.md)) |
 | `uc-pxx-console`, `uc-pxx-kiosk`, `uc-pxx-ha` | The profile meta packages |
 
-The board package and the profile packages are private. The published tree
-does not hold them. `rootfs/check-apk-tree.sh` stops the build and names the
-missing packages.
+tsx-aports builds these packages in its category `uc-pxx`. The sources are
+the tag `board-v<version>` of this repository and two release assets of
+tsx-aports. The tools bundle holds the static programs `uc-pxx-bootctl`,
+`uc-pxx-reboot-syscall` and `rtl8363-init`. The kernel bundle holds the boot
+image without the resource for U-Boot, the device trees and the modules
+([boot.md](boot.md) "The boot image"). The files in `rootfs/overlay` are the
+sources of `uc-pxx-board`.
 
-The board needs the commits of tsx-linux-common that add `TSX_PKG_PREFIX` and
-the board hook. They are not in a tagged release yet. Use no older common.
+The site of tsx-aports has two channels:
 
-TODO: the category `uc-pxx` does not exist in tsx-aports yet. The packages
-above are not written. The files in `rootfs/overlay` are the sources of
-`uc-pxx-board`.
+| Channel | Address | Use |
+|---|---|---|
+| stable | `https://tsx-aports.unexceptional.net` | The default of every panel |
+| testing | `https://tsx-aports.unexceptional.net/testing` | New packages before a person promotes them to stable |
+
+A panel uses the testing channel when `APK_URL` in its panel configuration
+names the testing address. `rootfs/fetch-apk-tree.sh` takes the address of
+the channel as its second argument. The default is stable.
+
+`rootfs/check-apk-tree.sh` stops the build and names the missing packages
+when the tree does not have all the packages of the profile.
+
+The board needs tsx-linux-common 0.3.12 or newer (`TSX_PKG_PREFIX` and the
+board hooks of `tsx-autoupdate`). Use no older common.
 
 ## Profiles
 

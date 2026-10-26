@@ -12,18 +12,18 @@
 #   - the packages of packages-tsx.txt that the profile installs
 # It prints each missing name and exits with status 1. It exits with status 0
 # when the tree has all of them and prints only the summary line.
-# The board package and the profile meta packages are private. The published
-# tree has the common packages and the kernel package of the uc-pxx. So a tree
-# from the public URL alone lacks them. Add the files of these packages to
-# <TREE>/<ALPINE>/uc-pxx/<ARCH> and index the folder (tsx-aports
-# scripts/index.sh).
+# tsx-aports publishes the shared packages in the category common and the
+# packages of this family in the category uc-pxx (docs/rootfs.md "Where the
+# packages come from"). A tree without the uc-pxx packages fails this check.
+# A test tree can add package files to <TREE>/<ALPINE>/uc-pxx/<ARCH> and index
+# the folder (tsx-aports scripts/index.sh).
 # ALPINE (default v3.24) and ARCH (default aarch64) pick the folders.
 # The script needs tar and awk.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 TREE=${1:-}
 PROFILE=${2:-ha}
-[ -n "$TREE" ] || { sed -n '2,22p' "$0" >&2; exit 2; }
+[ -n "$TREE" ] || { sed -n '2,21p' "$0" >&2; exit 2; }
 ALPINE=${ALPINE:-v3.24}
 ARCH=${ARCH:-aarch64}
 T=$(mktemp -d "${TMPDIR:-/tmp}/check-apk-tree.XXXXXX"); trap 'rm -rf "$T"' EXIT

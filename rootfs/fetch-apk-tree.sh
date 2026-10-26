@@ -8,12 +8,12 @@
 # DIR gets <ALPINE>/common/aarch64 and <ALPINE>/uc-pxx/aarch64. Each folder gets
 # APKINDEX.tar.gz and every package file that the index names. The script keeps
 # a file that DIR already has. So a second run fetches only what is new.
-# BASE_URL is the root of the published tree. The default is
-# https://tsx-aports.unexceptional.net. ALPINE is the branch (default v3.24).
-# The common category must exist, or the script stops. The uc-pxx category may
-# be missing. The script then says so and goes on. The category holds the kernel
-# package and uc-pxx-boot-tools. The board package and the profile meta
-# packages are private. check-apk-tree.sh finds out if the tree is complete.
+# BASE_URL is the root of the published tree: the stable channel
+# https://tsx-aports.unexceptional.net (the default) or the testing channel
+# https://tsx-aports.unexceptional.net/testing. ALPINE is the branch (default
+# v3.24). The common category must exist, or the script stops. The uc-pxx
+# category may be missing. The script then says so and goes on, and
+# check-apk-tree.sh finds out if the tree is complete.
 # The script needs curl, tar and awk.
 set -eu
 DIR=${1:-}

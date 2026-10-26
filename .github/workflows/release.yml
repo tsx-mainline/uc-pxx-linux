@@ -4,12 +4,15 @@ on:
     tags:
       - 'v*'
 
+# A tag v* starts this workflow. The board tags board-v* name the source of
+# the uc-pxx packages of tsx-aports and do not start it.
+#
 # Nothing here downloads or bundles a vendor file. The kernel and the rootfs
 # come from this repo and from the pinned source of the kernel fork. The rootfs
-# comes from packages: the published apk tree of this project, and the private
-# packages that it lacks (see the rootfs job). uc-pxx-firmware copies the
-# firmware from the unit itself at boot. Every job runs on a plain
-# ubuntu-latest runner, with no privileged container.
+# comes from packages: the stable tree of tsx-aports, with the categories
+# common and uc-pxx (see the rootfs job). uc-pxx-firmware copies the firmware
+# from the unit itself at boot. Every job runs on a plain ubuntu-latest
+# runner, with no privileged container.
 #
 # Job graph:
 #   kernel (lts) -> rootfs -> publish
@@ -18,12 +21,11 @@ on:
 # for root. The image allows key login only, so a release without a key
 # cannot be used.
 #
-# TODO: the boot image (kernel/mkimage.sh) is not part of the release. It needs
-# the Rockchip resource for U-Boot, a file that derives from vendor files. The
-# installer must take it from the unit or the kernel package must build the
-# image on the unit. Add the boot image to this workflow after that decision.
-# The installer and the kernel package (uc-pxx-kernel-lts in tsx-aports) do not
-# exist yet.
+# The boot image (kernel/mkimage.sh) is not part of the release. A boot image
+# for boot_a needs the Rockchip resource for U-Boot, a file that derives from
+# vendor files. The kernel package uc-pxx-kernel-lts of tsx-aports holds the
+# image without the resource. uc-pxx-update-boot on the unit adds the resource
+# of the unit before it writes boot_a (docs/boot-control.md).
 jobs:
   kernel:
     runs-on: ubuntu-latest
@@ -45,7 +47,7 @@ jobs:
           path: ../linux-uc-pxx-${{ matrix.flavor }}
           key: linux-uc-pxx-${{ matrix.flavor }}-${{ hashFiles(format('kernel/KERNEL_REV.{0}', matrix.flavor)) }}
 
-      - name: make a minimal initramfs (the real one is open, see README)
+      - name: make a minimal initramfs (the real one needs programs that CI does not build, docs/kernel.md)
         run: |
           mkdir initramfs-root
           printf '#!/bin/sh\n' > initramfs-root/init
@@ -73,13 +75,11 @@ jobs:
             out-${{ matrix.flavor }}/sha256sums.txt
           if-no-files-found: error
 
-  # The rootfs comes from packages (docs/rootfs.md "Build the image"). The
-  # published apk tree holds the common packages. It does not hold the private
-  # packages uc-pxx-board and uc-pxx-<profile>. A release has no image without
-  # them, so the job stops at the check with the names that are missing. It
-  # needs a tree that has them: put their files into
-  # apk-tree/v3.24/uc-pxx/aarch64 and index the folder before the build
-  # (docs/rootfs.md "Where the packages come from").
+  # The rootfs comes from packages (docs/rootfs.md "Build the image"). The job
+  # needs a published tree with all the packages of the image: the common
+  # packages and the uc-pxx packages (docs/rootfs.md "Where the packages come
+  # from"). Without them the job stops at the check with the names that are
+  # missing.
   rootfs:
     needs: kernel
     runs-on: ubuntu-latest
@@ -98,10 +98,10 @@ jobs:
       - name: fetch the published apk tree (rootfs/fetch-apk-tree.sh)
         run: rootfs/fetch-apk-tree.sh apk-tree
 
-      - name: check the apk tree for the private packages (rootfs/check-apk-tree.sh)
+      - name: check the apk tree for the packages of the image (rootfs/check-apk-tree.sh)
         run: |
           rootfs/check-apk-tree.sh apk-tree ha || {
-            echo "::error title=no rootfs image::The apk tree lacks the packages above. The board package and the profile packages are private, so the published tree does not hold them. A release needs a tree that does."
+            echo "::error title=no rootfs image::The apk tree lacks the packages above. A release needs the common and the uc-pxx packages of tsx-aports for this tag."
             exit 1
           }
 

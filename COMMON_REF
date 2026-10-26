@@ -1,0 +1,4 @@
+# The tsx-linux-common tag that the plugin tests of CI run against. The board
+# needs this release or a newer one (docs/rootfs.md "Where the packages come
+# from").
+v0.3.12

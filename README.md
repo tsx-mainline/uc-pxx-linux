@@ -16,22 +16,25 @@ tsx-linux-common keeps its `tsx-` names.
 
 ## Status
 
-This repository is a skeleton. The layout and the parts that are known from
-the bring-up work are here. The kernel, the initramfs, the boot-control
-tools and the installer are not here yet. The table shows what is done and
-what is open.
+This repository holds the board files, the boot-control tools, the
+initramfs, the kernel pin and the image build of the family. The apk
+repository tsx-aports builds the packages of the family (category `uc-pxx`)
+from the board tags of this repository, see [rootfs.md](docs/rootfs.md)
+"Where the packages come from". One UC-P10 runs these packages from a local
+build of the tsx-aports recipes. Its updates, also of the kernel, run through
+`tsx-autoupdate`. The table shows what is done and what is open.
 
 | Area | Status |
 |---|---|
 | Layout, CI checks, docs | Done |
-| Boot image build (`kernel/mkimage.sh`, shim) | Ported from the bring-up tree. Not run from this repository yet |
-| Kernel branch `uc-pxx-lts` | Done. `kernel/KERNEL_REV.lts` pins `d02e92631f28`. The kernel builds. Not booted from this repository |
-| Root file system build (`rootfs/`) | Ported from tsx-xx70-linux. Not run yet. The apk category `uc-pxx` does not exist yet |
-| Board files (`board.sh`, audio, buttons, fstab, inittab) | Written from the bring-up measurements. Not tested on a unit from this repository |
-| Services `uc-pxx-audio`, `uc-pxx-watchdog` | Ported. Not tested on a unit from this repository |
-| Services `uc-pxx-firmware`, `uc-pxx-switch`, `uc-pxx-als` | Stubs with TODO markers |
-| A/B boot control, flash wrapper and arm helper | Renamed from the reviewed bring-up tools. Needs a review of the exact files, see [boot-control.md](docs/boot-control.md) |
-| LED package `uc-pxx-leds` (daemon, command, ESPHome plugin) | Written. Tested with fake LEDs, see [leds.md](docs/leds.md). Not run on a unit |
+| Boot image build (`kernel/mkimage.sh`, shim) | Done. The kernel package of tsx-aports uses it. The unit boots its images |
+| Kernel branch `uc-pxx-lts` | Done. `kernel/KERNEL_REV.lts` pins `d02e92631f28`. The unit runs a build of the same source tree |
+| Root file system build (`rootfs/`) | Ported from tsx-xx70-linux. A build of the `ha` profile from test packages ran on a build host |
+| Board files (`board.sh`, audio, buttons, fstab, inittab) | In the package `uc-pxx-board`. They run on one UC-P10. Open points are in [rootfs.md](docs/rootfs.md) "TODO" |
+| Services `uc-pxx-audio`, `uc-pxx-watchdog` | Ported, with host tests. In the package `uc-pxx-board` |
+| Services `uc-pxx-firmware`, `uc-pxx-switch`, `uc-pxx-als` | Written, with host tests. The open points are TODO markers in each file |
+| A/B boot control, flash wrapper and arm helper | Reviewed. The packages pin the exact files, see [boot-control.md](docs/boot-control.md) |
+| LED package `uc-pxx-leds` (daemon, command, ESPHome plugin) | Written. Tested with fake LEDs, see [leds.md](docs/leds.md). Installed on one UC-P10 |
 | ESPHome board plugin (switches) | Written. Tested with a real `EVIOCGSW`. Not run on a unit |
 | Initramfs and rescue | Written (`rootfs/initramfs`): boot splash, rescue screen, login of the panel, install of `system_a`. See [boot.md](docs/boot.md) |
 | Installer | Open, see [install.md](docs/install.md) |
@@ -54,12 +57,13 @@ panfrost, the light sensor, the LEDs and the switches. See
 ```
 bootloader/          the shim source (the boot image kernel stub)
 ci/                  lint and repository checks
+COMMON_REF           the tsx-linux-common tag of the CI tests
 docs/                family, boot chain, hardware, kernel, rootfs, boot control, install
 kernel/              kernel revision pin, kernel build, boot image assembly
 packages/            self-contained packages (uc-pxx-leds)
 rootfs/              root file system builder, profiles, board overlay, tests
 tools/               helpers for the board (switch init)
-.github/workflows/   CI workflows (this repository is local only for now)
+.github/workflows/   CI workflows
 ```
 
 ## Documentation
@@ -68,8 +72,9 @@ tools/               helpers for the board (switch init)
 - [hardware.md](docs/hardware.md): the board and its parts
 - [kernel.md](docs/kernel.md): kernel branch, build and boot image
 - [rootfs.md](docs/rootfs.md): the root file system, profiles, board files and services
-- [boot-control.md](docs/boot-control.md): the A/B boot control (placeholder)
-- [install.md](docs/install.md): the install path (placeholder)
+- [boot-control.md](docs/boot-control.md): the A/B boot control, the pinned files and the kernel updates
+- [leds.md](docs/leds.md): the LED package
+- [install.md](docs/install.md): the plan of the install path (no installer in this repository yet)
 
 ## Warning
 

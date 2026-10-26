@@ -82,17 +82,21 @@ jobs:
       - name: rootfs/tests/test-kernel-pins.sh - the rootfs kernel package matches kernel/KERNEL_REV.lts
         run: rootfs/tests/test-kernel-pins.sh
 
-  # The ESPHome plugin runs against tsx_panel of tsx-linux-common. TSX_COMMON
-  # names the checkout.
+  # The ESPHome plugin runs against tsx_panel of tsx-linux-common (the tag in
+  # COMMON_REF). TSX_COMMON names the checkout.
   plugin-tests:
     name: ESPHome plugin with tsx-linux-common
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: check out tsx-linux-common
+      - name: read COMMON_REF
+        id: common
+        run: echo "ref=$(grep -v -e '^#' -e '^$' COMMON_REF)" >> "$GITHUB_OUTPUT"
+      - name: check out tsx-linux-common ${{ steps.common.outputs.ref }}
         uses: actions/checkout@v4
         with:
           repository: tsx-mainline/tsx-linux-common
+          ref: ${{ steps.common.outputs.ref }}
           path: tsx-linux-common
       - name: rootfs/tests/test-esphome-plugin.sh - the board plugin with a fake input device
         run: sh rootfs/tests/test-esphome-plugin.sh
@@ -108,5 +112,5 @@ jobs:
           TSX_COMMON: ${{ github.workspace }}/tsx-linux-common
 
   # TODO: add a job that runs the shared software of tsx-linux-common with the
-  # board files of this repository, as tsx-xx70-linux does. It needs
-  # TSX_PKG_PREFIX in common first (docs/rootfs.md "Board values").
+  # board files of this repository, as tsx-xx60-linux does (docs/rootfs.md
+  # "Board values").

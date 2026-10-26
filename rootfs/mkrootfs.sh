@@ -16,7 +16,7 @@
 #               installs the profile meta package (uc-pxx-console, uc-pxx-kiosk
 #               or uc-pxx-ha) and the packages of packages-tsx.txt from it.
 #               check-apk-tree.sh stops the build when the tree lacks one of
-#               them, for example the private package uc-pxx-board.
+#               them, for example the board package uc-pxx-board.
 #   AUTHORIZED_KEYS  optional, test builds only
 #   TSX_COMMON  optional: a checkout of tsx-linux-common. Its
 #               splash/mksplash.sh renders the sizes of UC_PXX_SPLASH_SIZES
