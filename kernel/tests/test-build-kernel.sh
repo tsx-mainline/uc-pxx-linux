@@ -29,6 +29,10 @@ case $out in *"no initramfs"*) ok "the error names the file";; *) bad "unclear e
 echo "== the fragment and the device trees =="
 grep -q 'defconfig uc-pxx.config' "$S" && ok "the config fragment is uc-pxx.config" || bad "no uc-pxx.config"
 grep -q 'INITRAMFS_SOURCE' "$S" && grep -q 'INITRAMFS_COMPRESSION_XZ' "$S" && ok "the script sets the initramfs source and xz" || bad "no initramfs config"
+# The Image holds its config (CONFIG_IKCONFIG): the source must be the
+# relative name of the copy in the build folder, never a path of the host.
+grep -q -- '--set-str INITRAMFS_SOURCE initramfs.cpio ' "$S" && ok "the initramfs source is the relative name initramfs.cpio" || bad "the initramfs source is not the relative name"
+grep -q 'cp "$INITRAMFS" "$BUILD/initramfs.cpio"' "$S" && ok "the script copies the initramfs into the build folder" || bad "no copy of the initramfs in the build folder"
 for d in rk3399-crestron-ucp10.dtb rk3399-crestron-ucp8.dtb; do
 	grep -q "$d" "$S" && ok "builds $d" || bad "does not build $d"
 done

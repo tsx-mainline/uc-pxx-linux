@@ -56,8 +56,11 @@ Build on a build host and never on the workstation.
 
 1. Make the initramfs as an uncompressed cpio archive (newc format).
 2. Run `ci/build-kernel.sh --flavor lts --initramfs FILE`. The option is
-   required. The script sets `CONFIG_INITRAMFS_SOURCE` to `FILE` and
+   required. The script copies `FILE` into the build folder, sets
+   `CONFIG_INITRAMFS_SOURCE` to the relative name of the copy and sets
    `CONFIG_INITRAMFS_COMPRESSION_XZ=y`. The kernel compresses the archive.
+   The Image holds its config (`CONFIG_IKCONFIG`), so the relative name keeps
+   the paths of the build host out of it.
 3. The script writes `Image`, `rk3399-crestron-ucp10.dtb`,
    `rk3399-crestron-ucp8.dtb`, `kernel.release`, `kernel.commit` and
    `sha256sums.txt` to the output folder.

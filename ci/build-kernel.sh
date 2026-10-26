@@ -17,9 +17,12 @@
 # device tree belongs to the model, so make one boot image for each model.
 #
 # --initramfs FILE is required. The config fragment uc-pxx.config does not
-# name an initramfs. The script sets CONFIG_INITRAMFS_SOURCE to the cpio
-# archive FILE and CONFIG_INITRAMFS_COMPRESSION_XZ=y. The kernel compresses
-# the archive with xz, so FILE must not be compressed.
+# name an initramfs. The script copies the cpio archive FILE into the build
+# folder and sets CONFIG_INITRAMFS_SOURCE to the relative name of the copy,
+# and CONFIG_INITRAMFS_COMPRESSION_XZ=y. The kernel keeps its config in the
+# Image (CONFIG_IKCONFIG), so the relative name keeps the paths of the build
+# machine out of the Image. The kernel compresses the archive with xz, so FILE
+# must not be compressed.
 #
 # Host packages: gcc-aarch64-linux-gnu, make, bc, bison, flex, libssl-dev,
 # libelf-dev, kmod, zstd, xz-utils, git.
@@ -28,7 +31,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 FLAVOR= SRC= OUT= INITRAMFS= JOBS=$(nproc)
-usage() { sed -n '2,27p' "$0" >&2; exit 2; }
+usage() { sed -n '2,30p' "$0" >&2; exit 2; }
 while [ $# -gt 0 ]; do
 	case $1 in
 	--flavor) FLAVOR=${2:?}; shift;;
@@ -72,8 +75,9 @@ rm -rf "$BUILD"; mkdir -p "$BUILD"
 # string names no build machine.
 M="make -C $SRC O=$BUILD ARCH=arm64 CROSS_COMPILE=$CROSS KBUILD_BUILD_USER=build KBUILD_BUILD_HOST=uc-pxx-build"
 $M -s defconfig uc-pxx.config
-INITRAMFS=$(readlink -f "$INITRAMFS")
-"$SRC/scripts/config" --file "$BUILD/.config" --set-str INITRAMFS_SOURCE "$INITRAMFS" \
+# The build runs in $BUILD, so the relative name is the copy in $BUILD.
+cp "$INITRAMFS" "$BUILD/initramfs.cpio"
+"$SRC/scripts/config" --file "$BUILD/.config" --set-str INITRAMFS_SOURCE initramfs.cpio \
 	-e RD_XZ -e INITRAMFS_COMPRESSION_XZ
 $M -s olddefconfig
 
