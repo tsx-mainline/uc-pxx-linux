@@ -89,7 +89,10 @@ grep -q 'MiB' "$T/out" && grep -q '100%' "$T/out" && ok "the output shows MiB an
 [ "$(sum mmcblk0p5)" = "$MISC0" ] && ok "misc is unchanged" || bad "misc changed"
 [ "$(sum mmcblk0p22)" != "$SYS0" ] && ok "system_a changed" || bad "system_a did not change"
 blkid "$D/mmcblk0p22" | grep -q 'LABEL="tsxroot"' && ok "system_a has the label tsxroot" || bad "no label on system_a"
-dumpe2fs -h "$D/mmcblk0p22" 2>/dev/null | grep -q 'Block count: *4096' && ok "the file system fills system_a (4 MiB)" || bad "the file system was not grown"
+# The block size of mkfs.ext4 depends on the mke2fs.conf of the host (1 KiB on
+# Debian, 4 KiB on Ubuntu 24.04), so compare the size in bytes.
+fsbytes=$(dumpe2fs -h "$D/mmcblk0p22" 2>/dev/null | awk -F: '/^Block count:/ { c = $2 } /^Block size:/ { b = $2 } END { print c * b }')
+[ "$fsbytes" = 4194304 ] && ok "the file system fills system_a (4 MiB)" || bad "the file system was not grown ($fsbytes bytes)"
 
 echo "== a write from standard input =="
 dd if=/dev/urandom of="$D/mmcblk0p22" bs=512 count=$SECT status=none
