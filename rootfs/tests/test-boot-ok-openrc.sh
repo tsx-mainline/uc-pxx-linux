@@ -5,6 +5,9 @@
 #   sh rootfs/tests/test-boot-ok-openrc.sh [INIT_SCRIPT]
 # On the host the script starts itself in a container (docker, the image
 # UC_PXX_TEST_IMAGE, default alpine:3.24) and installs openrc there (network).
+# The container runs the architecture of that image. If the local alpine:3.24
+# tag is not arm64 (the unit's architecture), set UC_PXX_TEST_IMAGE to an
+# arm64 image (docker run --platform does not replace a local tag).
 # Without docker it prints SKIPPED and exits 0. INIT_SCRIPT (a path in this
 # repository) replaces rootfs/overlay/etc/init.d/uc-pxx-boot-ok.
 set -u
@@ -56,11 +59,13 @@ newboot() {
 
 echo "== the boot: openrc default =="
 rc-update -q add uc-pxx-boot-ok default
-newboot 4 0
+# The hook runs 20 s. openrc must return before the hook ends: that is the
+# check, not a time limit (a time limit fails on a slow or emulated host).
+newboot 20 0
 t0=$(now); timeout 60 openrc -q default >/dev/null 2>&1; rc=$?; t1=$(now)
-{ [ $rc = 0 ] && lt "$t0" "$t1" 3; } && ok "openrc default returns at once ($t0 -> $t1) while the hook runs" || bad "openrc default: rc $rc, $t0 -> $t1"
+{ [ $rc = 0 ] && ! ended; } && ok "openrc default returns while the hook runs ($t0 -> $t1)" || bad "openrc default: rc $rc, $t0 -> $t1, hook ended first: $(ended && echo yes || echo no)"
 [ "$(state)" = started ] && ok "while the hook runs: started" || bad "while the hook runs: $(state)"
-wait_for 100 ended && ok "the hook ends with 0" || bad "the hook did not end"
+wait_for 300 ended && ok "the hook ends with 0" || bad "the hook did not end"
 sleep 0.5
 { [ "$(state)" = started ] && ! crashed; } && ok "after the hook ends: started, not in rc-status --crashed" || bad "after the hook ends: $(state)"
 rc-status default 2>/dev/null | grep uc-pxx-boot-ok | sed 's/^/    rc-status: /'

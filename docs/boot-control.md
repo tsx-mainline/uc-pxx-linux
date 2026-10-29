@@ -96,6 +96,12 @@ result of the hook. Read the `uc-pxx-mark-boot:` lines of the kernel log
   `/proc/<pid>/cmdline` first, so it never stops another program that got
   the same pid. A `uc-pxx-bootctl` child that already runs finishes its
   write.
+- A `stop`, a `restart` or a runlevel change while the hook still waits (the
+  first 60 to 360 seconds of a boot) ends the marking for that boot. Slot A
+  stays "trying". The next boot marks it, or U-Boot starts slot B. To start
+  the hook again by hand, remove `/run/uc-pxx-boot-ok.pid` first.
+- At shutdown, OpenRC sends SIGTERM and then SIGKILL to every process, and
+  that includes a `uc-pxx-bootctl` child. The old service did the same.
 
 ### uc-pxx-flash-boot
 
