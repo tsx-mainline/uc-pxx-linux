@@ -4,8 +4,43 @@
 # boot that is never marked runs out of tries, and U-Boot starts the other
 # slot (docs/boot-control.md). The hook does all the checks and the waiting,
 # so this service does not delay the boot.
+#
+# The hook ends by itself. So this service does not give it to
+# start-stop-daemon: OpenRC would show "crashed" after the hook ends. The
+# service stays "started", and the hook writes its result to the kernel log.
+# The hook runs once per boot. /run is a new tmpfs at each boot, and the pid
+# file stays after the hook ends, so a second start (also a restart) does not
+# start the hook again. A stop sends SIGTERM to the hook if it still runs.
+# setsid gives the hook its own session, as start-stop-daemon did. So the end
+# of the session of the boot console does not stop the hook.
 description="Mark the boot as good after a healthy boot (uc-pxx-mark-boot)"
-command=/etc/uc-pxx-mark-boot.sh
-command_background=true
-pidfile=/run/uc-pxx-boot-ok.pid
+hook=/etc/uc-pxx-mark-boot.sh
+hook_pidfile=/run/uc-pxx-boot-ok.pid
 depend() { after sshd networking; }
+
+start() {
+	ebegin "Starting uc-pxx-mark-boot in the background"
+	if [ ! -x "$hook" ] || ! command -v setsid > /dev/null; then
+		eend 1 "$hook or setsid is missing"
+		return 1
+	fi
+	if [ -e "$hook_pidfile" ]; then
+		ewarn "uc-pxx-mark-boot started before in this boot, it does not start again"
+		eend 0
+		return 0
+	fi
+	setsid "$hook" < /dev/null > /dev/null 2>&1 &
+	echo $! > "$hook_pidfile"
+	eend 0
+}
+
+stop() {
+	ebegin "Stopping uc-pxx-mark-boot"
+	local pid
+	pid=$(cat "$hook_pidfile" 2> /dev/null)
+	# Only the hook: the pid of an ended hook can belong to another program now.
+	if [ -n "$pid" ] && grep -qs "$hook" "/proc/$pid/cmdline"; then
+		kill "$pid"
+	fi
+	eend 0
+}

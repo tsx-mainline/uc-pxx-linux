@@ -79,6 +79,24 @@ in this order and stops at the first one that fails:
 A boot that the hook does not mark stays "trying". It uses up its tries, and
 U-Boot starts the other slot.
 
+### The service uc-pxx-boot-ok
+
+The OpenRC service `uc-pxx-boot-ok` (default runlevel, after `sshd` and
+`networking`) starts the hook in the background and returns at once. The
+hook ends by itself, so the service does not register it with
+start-stop-daemon. The service stays "started" after the hook ends.
+`rc-status` does not show "crashed". The service state does not show the
+result of the hook. Read the `uc-pxx-mark-boot:` lines of the kernel log
+(`dmesg`) and `uc-pxx-bootctl status` for the result.
+
+- The hook runs once per boot. The pid file `/run/uc-pxx-boot-ok.pid` stays
+  after the hook ends, and `/run` is empty at each boot. A second `start`
+  or a `restart` does not start the hook again.
+- `stop` sends SIGTERM to the hook if it still runs. It checks
+  `/proc/<pid>/cmdline` first, so it never stops another program that got
+  the same pid. A `uc-pxx-bootctl` child that already runs finishes its
+  write.
+
 ### uc-pxx-flash-boot
 
 ```
@@ -300,6 +318,17 @@ sector file. Give it a program that runs on the host:
 
 ```
 UC_PXX_BOOTCTL_RUN="qemu-aarch64-static ./uc-pxx-bootctl-aarch64" sh rootfs/tests/test-mark-boot.sh
+```
+
+Two tests check the service `uc-pxx-boot-ok` with a stub hook.
+`rootfs/tests/test-boot-ok.sh` runs `start` and `stop` with stub OpenRC
+functions. `rootfs/tests/test-boot-ok-openrc.sh` runs the service under a
+real OpenRC in an Alpine container (docker) and reads the state from
+`rc-service` and `rc-status`:
+
+```
+sh rootfs/tests/test-boot-ok.sh
+sh rootfs/tests/test-boot-ok-openrc.sh
 ```
 
 ## Review
