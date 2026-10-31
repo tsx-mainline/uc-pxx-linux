@@ -17,6 +17,19 @@
  *   successful and leaves K byte-identical.
  * mark-successful never changes the other slot. arm-trying and disable never change the keeper, except
  * the one priority byte that --lower-keeper names.
+ * repair --keeper K --expect-sector HEX: the only command that writes over a sector that is NOT valid.
+ *   For the installer's hold: an install ended with the A/B state unknown, and the caller has proven
+ *   that the keeper K (the slot the install never wrote) is intact. The current sector must be
+ *   byte-identical to HEX (the 512 bytes the caller read, as 1024 lowercase hex digits). Nothing to do
+ *   (exit 0, no write) when the sector is valid and K is successful, or valid and libavb boots K.
+ *   Otherwise (bad magic, version, reserved bytes or CRC, an illegal slot, no bootable slot, or the
+ *   other slot boots next while K is not successful) it writes, once, the one fixed state R(K):
+ *   magic, version 1.0, K successful {15,0,1}, the other slot {0,0,0}, reserved bytes zero, the
+ *   big-endian CRC; bytes 32..511 unchanged. It never writes a second time and never writes the old
+ *   sector back: a read-back that is neither R(K) nor the old sector is exit 3, and the caller decides.
+ * switch --to T --expect-sector HEX: make the successful slot T boot next (priority 15), the other
+ *   slot staying bootable with priority min(p, 14). Refuses an invalid sector, a T that is not
+ *   successful, and another slot that is not bootable. One write, read back, as repair.
  *
  * AvbABData = first 32 bytes of eMMC LBA 49156 (misc partition start 49152 + 4):
  *   0..3 magic "\0AB0" | 4 version_major (1) | 5 version_minor | 6..7 reserved
@@ -30,6 +43,8 @@
  *   uc-pxx-bootctl mark-successful   --expect a|b [--token TOKEN] [--dry-run] [--file PATH]
  *   uc-pxx-bootctl arm-trying        --slot a|b [--lower-keeper] [--dry-run] [--file PATH]
  *   uc-pxx-bootctl disable           --slot a|b [--dry-run] [--file PATH]
+ *   uc-pxx-bootctl repair            --keeper a|b --expect-sector HEX [--dry-run] [--file PATH]
+ *   uc-pxx-bootctl switch            --to a|b --expect-sector HEX [--dry-run] [--file PATH]
  * --file operates on a 512-byte sector image instead of the eMMC (testing; skips device checks;
  *   --token is then compared against the file given by --boot-file, default none = refuse).
  * Exit: 0 = done / nothing to do
@@ -382,16 +397,216 @@ static int only_target_and_keeper_prio_changed(const uint8_t *cur, const uint8_t
 static int usage(void)
 {
 	fprintf(stderr, "usage: uc-pxx-bootctl status | mark-successful --expect a|b [--token T] | "
-		"arm-trying --slot a|b [--lower-keeper] | disable --slot a|b   "
+		"arm-trying --slot a|b [--lower-keeper] | disable --slot a|b | "
+		"repair --keeper a|b --expect-sector HEX | switch --to a|b --expect-sector HEX   "
 		"[--dry-run] [--file PATH [--boot-file PATH]]\n");
 	return RC_REFUSED;
 }
 
+static int hexdigit(char c)
+{
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	return -1;                 /* lowercase only: one spelling per sector */
+}
+
+/* exactly 1024 lowercase hex digits -> 512 bytes; 0 on success */
+static int parse_sector_hex(const char *s, uint8_t *out)
+{
+	if (strlen(s) != 2 * SECTOR)
+		return -1;
+	for (int i = 0; i < SECTOR; i++) {
+		int hi = hexdigit(s[2 * i]), lo = hexdigit(s[2 * i + 1]);
+
+		if (hi < 0 || lo < 0)
+			return -1;
+		out[i] = (uint8_t)(hi << 4 | lo);
+	}
+	return 0;
+}
+
+/* NULL = no repair needed: valid, and the keeper is successful or libavb boots it; else the reason */
+static const char *repair_reason(const uint8_t *ab, int keeper)
+{
+	const char *why = validate(ab);
+
+	if (why)
+		return why;
+	if (slot_successful(ab + 8 + 4 * keeper))
+		return NULL;
+	if (libavb_pick(ab) == keeper)
+		return NULL;
+	return "the other slot boots next and the keeper is not successful";
+}
+
+/* R(keeper): the fixed repaired state; bytes 32..511 are those of cur */
+static void repaired_state(const uint8_t *cur, int keeper, uint8_t *next)
+{
+	memcpy(next, cur, SECTOR);
+	memset(next, 0, 32);
+	next[1] = 'A';
+	next[2] = 'B';
+	next[3] = '0';
+	next[4] = 1;                       /* version 1.0 */
+	next[8 + 4 * keeper] = 15;         /* priority */
+	next[8 + 4 * keeper + 1] = 0;      /* tries_remaining */
+	next[8 + 4 * keeper + 2] = 1;      /* successful_boot */
+	put_be32(next + 28, crc32_ieee(next, 28));
+}
+
+static void print_hex32(const char *tag, const uint8_t *ab)
+{
+	printf("%s ", tag);
+	for (int i = 0; i < 32; i++)
+		printf("%02x", ab[i]);
+	printf("\n");
+}
+
+/*
+ * One write of next over cur, and a read-back. No second write and no restore of cur: the caller
+ * decides. 0 = next verified on disk; 2 = cur read back (the write did not take); 3 = anything else.
+ */
+static int write_once(const uint8_t *cur, const uint8_t *next, const char *tag)
+{
+	uint8_t back[SECTOR];
+	char t[32];
+
+	if (write_sector(next))
+		logmsg("write call failed: %s; checking what is on disk", strerror(errno));
+	if (read_sector_retry(back)) {
+		logmsg("!!! the read-back failed: A/B STATE UNKNOWN; no second write");
+		return RC_UNKNOWN;
+	}
+	if (!memcmp(back, next, SECTOR)) {
+		describe("written (verified by read-back)", next);
+		snprintf(t, sizeof(t), "%s: wrote", tag);
+		print_hex32(t, next);
+		return RC_OK;
+	}
+	if (!memcmp(back, cur, SECTOR)) {
+		logmsg("write did not take; the old sector is still on disk (unchanged)");
+		return RC_IO_UNCHANGED;
+	}
+	describe("read back (decoded, not trusted)", back);
+	snprintf(t, sizeof(t), "%s: read-back", tag);
+	print_hex32(t, back);
+	logmsg("!!! the read-back is neither the old sector nor the new one: A/B STATE UNKNOWN; no second write");
+	return RC_UNKNOWN;
+}
+
+/*
+ * repair: one guarded write of R(keeper). cur is the sector just read, expect the caller's copy.
+ * Exit 0 = nothing to do, or R(keeper) written and verified by read-back; 1 = refused, nothing
+ * written; 2 = the write did not take (the old sector read back); 3 = anything else after the write.
+ */
+static int do_repair(const uint8_t *cur, const uint8_t *expect, int keeper, int dry)
+{
+	uint8_t next[SECTOR];
+	const uint8_t *k, *t;
+	const char *why;
+
+	if (memcmp(cur, expect, SECTOR)) {
+		logmsg("refusing: the sector on disk is not the one given with --expect-sector");
+		return RC_REFUSED;
+	}
+	describe("current (decoded, not trusted)", cur);
+	why = repair_reason(cur, keeper);
+	if (!why) {
+		logmsg("no repair needed: the sector is valid, and slot %c is successful or boots next",
+		       "ab"[keeper]);
+		printf("repair: not-needed\n");
+		return RC_OK;
+	}
+	logmsg("repair needed: %s", why);
+	repaired_state(cur, keeper, next);
+
+	/* belt and braces before touching the disk */
+	k = next + 8 + 4 * keeper;
+	t = next + 8 + 4 * !keeper;
+	if (validate(next) || !slot_successful(k) || k[0] != 15 || k[3] || t[0] || t[1] || t[2] || t[3] ||
+	    libavb_pick(next) != keeper || memcmp(next + 32, cur + 32, SECTOR - 32)) {
+		logmsg("internal error, the repaired state is not keeper-only bootable");
+		return RC_REFUSED;
+	}
+	describe(dry ? "would write" : "writing", next);
+	print_hex32(dry ? "repair: would-write" : "repair: writing", next);
+	fflush(stdout);
+	if (dry)
+		return RC_OK;
+
+	return write_once(cur, next, "repair");
+}
+
+/*
+ * switch --to T: make the successful slot T the next boot, the other slot O staying bootable as the
+ * fallback. The sector must be valid and byte-identical to expect. T successful {prio >= 1, tries 0,
+ * succ 1}, O bootable. New state: T priority 15, O priority min(O, 14); nothing else changes (only
+ * the two priority bytes and the CRC). Nothing to do when libavb boots T already with a strictly
+ * higher priority than O. Exit codes as repair.
+ */
+static int do_switch(const uint8_t *cur, const uint8_t *expect, int to, int dry)
+{
+	uint8_t next[SECTOR];
+	int t = 8 + 4 * to, o = 8 + 4 * !to;
+	const char *why;
+
+	if (memcmp(cur, expect, SECTOR)) {
+		logmsg("refusing: the sector on disk is not the one given with --expect-sector");
+		return RC_REFUSED;
+	}
+	if ((why = validate(cur))) {
+		logmsg("refusing: current AvbABData invalid: %s", why);
+		return RC_REFUSED;
+	}
+	describe("current", cur);
+	if (!slot_successful(cur + t)) {
+		logmsg("refusing: slot %c is not successful: switch only to a slot that booted and was marked",
+		       "ab"[to]);
+		return RC_REFUSED;
+	}
+	if (!slot_bootable(cur + o)) {
+		logmsg("refusing: slot %c is not bootable: it would not be a fallback", "ab"[!to]);
+		return RC_REFUSED;
+	}
+	if (libavb_pick(cur) == to && cur[t] > cur[o]) {
+		logmsg("slot %c boots next already, nothing to do", "ab"[to]);
+		printf("switch: not-needed\n");
+		return RC_OK;
+	}
+	memcpy(next, cur, SECTOR);
+	next[t] = 15;
+	if (next[o] > 14)
+		next[o] = 14;
+	put_be32(next + 28, crc32_ieee(next, 28));
+
+	/* belt and braces before touching the disk */
+	for (int i = 0; i < SECTOR; i++)
+		if (next[i] != cur[i] && i != t && i != o && (i < 28 || i > 31)) {
+			logmsg("internal error, a byte other than the two priorities and the crc would change");
+			return RC_REFUSED;
+		}
+	if (validate(next) || !slot_successful(next + t) || !slot_bootable(next + o) ||
+	    libavb_pick(next) != to || next[t] <= next[o]) {
+		logmsg("internal error, slot %c would not boot next with slot %c as a bootable fallback",
+		       "ab"[to], "ab"[!to]);
+		return RC_REFUSED;
+	}
+	describe(dry ? "would write" : "writing", next);
+	print_hex32(dry ? "switch: would-write" : "switch: writing", next);
+	fflush(stdout);
+	if (dry)
+		return RC_OK;
+	return write_once(cur, next, "switch");
+}
+
 int main(int argc, char **argv)
 {
-	const char *cmd = argc > 1 ? argv[1] : "", *token = NULL, *why;
-	int expect = -1, slot = -1, dry = 0, lower = 0, lowered = 0, picked, mark, arm, dis;
-	uint8_t cur[SECTOR], next[SECTOR];
+	const char *cmd = argc > 1 ? argv[1] : "", *token = NULL, *why, *sector_hex = NULL;
+	int expect = -1, slot = -1, dry = 0, lower = 0, lowered = 0, picked, mark, arm, dis, rep;
+	int keeper = -1, keeper_given = 0, to = -1, to_given = 0, sw;
+	uint8_t cur[SECTOR], next[SECTOR], want[SECTOR];
 
 	for (int i = 2; i < argc; i++) {
 		if (!strcmp(argv[i], "--dry-run"))
@@ -410,16 +625,43 @@ int main(int argc, char **argv)
 		} else if (!strcmp(argv[i], "--slot") && i + 1 < argc) {
 			i++;
 			slot = !strcmp(argv[i], "a") ? 0 : !strcmp(argv[i], "b") ? 1 : -1;
-		} else
+		} else if (!strcmp(argv[i], "--keeper") && i + 1 < argc) {
+			i++;
+			keeper_given = 1;
+			keeper = !strcmp(argv[i], "a") ? 0 : !strcmp(argv[i], "b") ? 1 : -1;
+		} else if (!strcmp(argv[i], "--to") && i + 1 < argc) {
+			i++;
+			to_given = 1;
+			to = !strcmp(argv[i], "a") ? 0 : !strcmp(argv[i], "b") ? 1 : -1;
+		} else if (!strcmp(argv[i], "--expect-sector") && i + 1 < argc)
+			sector_hex = argv[++i];
+		else
 			return usage();
 	}
 	mark = !strcmp(cmd, "mark-successful");
 	arm = !strcmp(cmd, "arm-trying");
 	dis = !strcmp(cmd, "disable");
-	if (!mark && !arm && !dis && strcmp(cmd, "status"))
+	rep = !strcmp(cmd, "repair");
+	sw = !strcmp(cmd, "switch");
+	if (!mark && !arm && !dis && !rep && !sw && strcmp(cmd, "status"))
 		return usage();
 	if (lower && !arm)
 		return usage();
+	/* --keeper belongs to repair, --to to switch, --expect-sector to both; they take no other option */
+	if ((keeper_given && !rep) || (to_given && !sw) || (sector_hex && !rep && !sw))
+		return usage();
+	if ((rep || sw) && (slot >= 0 || expect >= 0 || token || boot_file || !sector_hex))
+		return usage();
+	if ((rep && !keeper_given) || (sw && !to_given))
+		return usage();
+	if ((rep && keeper < 0) || (sw && to < 0)) {
+		logmsg("refusing: %s a|b is required", rep ? "--keeper" : "--to");
+		return RC_REFUSED;
+	}
+	if ((rep || sw) && parse_sector_hex(sector_hex, want)) {
+		logmsg("refusing: --expect-sector must be the 512 bytes of the sector as 1024 lowercase hex digits");
+		return RC_REFUSED;
+	}
 
 	if (!file_path && (why = check_device(mark && token))) {
 		logmsg("refusing: %s", why);
@@ -429,6 +671,10 @@ int main(int argc, char **argv)
 		logmsg("read of LBA %llu failed: %s", AB_LBA, strerror(errno));
 		return RC_REFUSED;
 	}
+	if (rep)
+		return do_repair(cur, want, keeper, dry);
+	if (sw)
+		return do_switch(cur, want, to, dry);
 	if ((why = validate(cur))) {
 		logmsg("refusing: current AvbABData invalid: %s", why);
 		return RC_REFUSED;

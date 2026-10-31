@@ -7,6 +7,7 @@
 #
 # Env: CC (default aarch64-linux-gnu-gcc), QEMU (default qemu-aarch64-static),
 # SECTORS (folders with captured *.bin sectors for the tests, optional),
+# OLD (the reviewed binary for the differential of test-repair.py, optional),
 # NO_TEST=1 (build only). OUT defaults to ./uc-pxx-bootctl-aarch64.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -21,3 +22,10 @@ printf '#!/bin/sh\nexec %s %s "$@"\n' "$QEMU" "$(realpath "$OUT")" > "$W/run.sh"
 chmod 755 "$W/run.sh"
 # shellcheck disable=SC2086 # SECTORS is a list of folders
 python3 "$HERE/test.py" "$W/run.sh" ${SECTORS:-}
+if [ -n "${OLD:-}" ]; then
+	printf '#!/bin/sh\nexec %s %s "$@"\n' "$QEMU" "$(realpath "$OLD")" > "$W/old.sh"
+	chmod 755 "$W/old.sh"
+	python3 "$HERE/test-repair.py" "$W/run.sh" --old "$W/old.sh"
+else
+	python3 "$HERE/test-repair.py" "$W/run.sh"
+fi
