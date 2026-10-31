@@ -47,7 +47,8 @@
  *   uc-pxx-bootctl switch            --to a|b --expect-sector HEX [--dry-run] [--file PATH]
  * --file operates on a 512-byte sector image instead of the eMMC (testing; skips device checks;
  *   --token is then compared against the file given by --boot-file, default none = refuse).
- * The write forms (arm-trying, disable, repair, switch; not --dry-run) need queue/fua = 1: their one
+ * The write forms (arm-trying, disable, repair, switch; not --dry-run) need queue/fua = 1 and
+ *   queue/write_cache = "write back" ("write through" drops FUA and every flush): their one
  *   O_DIRECT|O_DSYNC pwrite is then a REQ_FUA write, which the mmc driver sends as an eMMC reliable
  *   write (CMD23 bit 31, or the CQE task's reliable-write bit); the fsync after it flushes the eMMC
  *   cache (FLUSH_CACHE) before the read-back.
@@ -207,8 +208,9 @@ static int same_dev(const char *node, const char *sysfs_dir)
 
 /*
  * /dev/mmcblk0 must be the eMMC whose p5 is "misc" at 49152 (and p13 "boot_a" when needed). For the
- * installer's write forms (need_fua) the queue must take FUA: then the O_DSYNC write is an eMMC
- * reliable write (block/fops.c dio_bio_write_op, drivers/mmc/core/block.c MMC_BLK_REL_WR).
+ * installer's write forms (need_fua) the queue must take FUA and its write cache must be "write
+ * back": then the O_DSYNC write is an eMMC reliable write (block/fops.c dio_bio_write_op,
+ * drivers/mmc/core/block.c MMC_BLK_REL_WR) and the fsync a FLUSH_CACHE.
  */
 static const char *check_device(int need_boota, int need_fua)
 {
@@ -226,6 +228,9 @@ static const char *check_device(int need_boota, int need_fua)
 		return EMMC_DEV " is not the device sysfs calls mmcblk0";
 	if (need_fua && (read_text(EMMC_SYSFS "/queue/fua", buf, sizeof(buf)) || strcmp(buf, "1\n")))
 		return "the eMMC queue does not take FUA (queue/fua is not 1): the write would not be a reliable write";
+	/* "write through" (root can set it) drops REQ_FUA and the flush in submit_bio_noacct */
+	if (need_fua && (read_text(EMMC_SYSFS "/queue/write_cache", buf, sizeof(buf)) || strcmp(buf, "write back\n")))
+		return "the eMMC queue write cache is not \"write back\": FUA and the cache flush would be dropped";
 	if (need_boota) {
 		if (read_text(BOOTA_SYSFS "/uevent", buf, sizeof(buf)) || !strstr(buf, "PARTNAME=boot_a\n"))
 			return "mmcblk0p13 is not 'boot_a'";
