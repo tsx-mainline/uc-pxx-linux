@@ -66,12 +66,9 @@ def pick(b):
 
 
 def needs_repair(b, k):
-    """The rule of DEVMODE-R4.md §2: no repair when valid and (keeper successful, or libavb boots it)."""
-    if not valid(b):
-        return True
-    if successful(b[8 + 4 * k:12 + 4 * k]):
-        return False
-    return pick(b) != k
+    """The rule of DEVMODE-R4.md §2 with the owner's Q1 (§11): no repair only when the sector is valid
+    and the keeper is successful. A keeper that boots next but only as trying is repaired too."""
+    return not valid(b) or not successful(b[8 + 4 * k:12 + 4 * k])
 
 
 def repaired(cur, k):

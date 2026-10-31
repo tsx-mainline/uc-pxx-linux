@@ -21,9 +21,9 @@
  *   For the installer's hold: an install ended with the A/B state unknown, and the caller has proven
  *   that the keeper K (the slot the install never wrote) is intact. The current sector must be
  *   byte-identical to HEX (the 512 bytes the caller read, as 1024 lowercase hex digits). Nothing to do
- *   (exit 0, no write) when the sector is valid and K is successful, or valid and libavb boots K.
- *   Otherwise (bad magic, version, reserved bytes or CRC, an illegal slot, no bootable slot, or the
- *   other slot boots next while K is not successful) it writes, once, the one fixed state R(K):
+ *   (exit 0, no write) when the sector is valid and K is successful. Otherwise (bad magic, version,
+ *   reserved bytes or CRC, an illegal slot, no bootable slot, or K not successful: the other slot
+ *   boots next, or K boots next only as trying) it writes, once, the one fixed state R(K):
  *   magic, version 1.0, K successful {15,0,1}, the other slot {0,0,0}, reserved bytes zero, the
  *   big-endian CRC; bytes 32..511 unchanged. It never writes a second time and never writes the old
  *   sector back: a read-back that is neither R(K) nor the old sector is exit 3, and the caller decides.
@@ -47,6 +47,10 @@
  *   uc-pxx-bootctl switch            --to a|b --expect-sector HEX [--dry-run] [--file PATH]
  * --file operates on a 512-byte sector image instead of the eMMC (testing; skips device checks;
  *   --token is then compared against the file given by --boot-file, default none = refuse).
+ * The write forms (arm-trying, disable, repair, switch; not --dry-run) need queue/fua = 1: their one
+ *   O_DIRECT|O_DSYNC pwrite is then a REQ_FUA write, which the mmc driver sends as an eMMC reliable
+ *   write (CMD23 bit 31, or the CQE task's reliable-write bit); the fsync after it flushes the eMMC
+ *   cache (FLUSH_CACHE) before the read-back.
  * Exit: 0 = done / nothing to do
  *       1 = refused, on-disk state unchanged
  *       2 = I/O error, but the on-disk sector was verified to be the original (unchanged or restored)
@@ -201,8 +205,12 @@ static int same_dev(const char *node, const char *sysfs_dir)
 	return major(st.st_rdev) == maj && minor(st.st_rdev) == min;
 }
 
-/* /dev/mmcblk0 must be the eMMC whose p5 is "misc" at 49152 (and p13 "boot_a" when needed) */
-static const char *check_device(int need_boota)
+/*
+ * /dev/mmcblk0 must be the eMMC whose p5 is "misc" at 49152 (and p13 "boot_a" when needed). For the
+ * installer's write forms (need_fua) the queue must take FUA: then the O_DSYNC write is an eMMC
+ * reliable write (block/fops.c dio_bio_write_op, drivers/mmc/core/block.c MMC_BLK_REL_WR).
+ */
+static const char *check_device(int need_boota, int need_fua)
 {
 	char buf[256];
 
@@ -216,6 +224,8 @@ static const char *check_device(int need_boota)
 		return "misc does not start at 49152";
 	if (!same_dev(EMMC_DEV, EMMC_SYSFS))
 		return EMMC_DEV " is not the device sysfs calls mmcblk0";
+	if (need_fua && (read_text(EMMC_SYSFS "/queue/fua", buf, sizeof(buf)) || strcmp(buf, "1\n")))
+		return "the eMMC queue does not take FUA (queue/fua is not 1): the write would not be a reliable write";
 	if (need_boota) {
 		if (read_text(BOOTA_SYSFS "/uevent", buf, sizeof(buf)) || !strstr(buf, "PARTNAME=boot_a\n"))
 			return "mmcblk0p13 is not 'boot_a'";
@@ -427,7 +437,7 @@ static int parse_sector_hex(const char *s, uint8_t *out)
 	return 0;
 }
 
-/* NULL = no repair needed: valid, and the keeper is successful or libavb boots it; else the reason */
+/* NULL = no repair needed: valid, and the keeper is successful; else the reason */
 static const char *repair_reason(const uint8_t *ab, int keeper)
 {
 	const char *why = validate(ab);
@@ -437,7 +447,7 @@ static const char *repair_reason(const uint8_t *ab, int keeper)
 	if (slot_successful(ab + 8 + 4 * keeper))
 		return NULL;
 	if (libavb_pick(ab) == keeper)
-		return NULL;
+		return "the keeper boots next but is not marked successful";
 	return "the other slot boots next and the keeper is not successful";
 }
 
@@ -514,8 +524,7 @@ static int do_repair(const uint8_t *cur, const uint8_t *expect, int keeper, int 
 	describe("current (decoded, not trusted)", cur);
 	why = repair_reason(cur, keeper);
 	if (!why) {
-		logmsg("no repair needed: the sector is valid, and slot %c is successful or boots next",
-		       "ab"[keeper]);
+		logmsg("no repair needed: the sector is valid and slot %c is successful", "ab"[keeper]);
 		printf("repair: not-needed\n");
 		return RC_OK;
 	}
@@ -663,7 +672,7 @@ int main(int argc, char **argv)
 		return RC_REFUSED;
 	}
 
-	if (!file_path && (why = check_device(mark && token))) {
+	if (!file_path && (why = check_device(mark && token, (arm || dis || rep || sw) && !dry))) {
 		logmsg("refusing: %s", why);
 		return RC_REFUSED;
 	}
