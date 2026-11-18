@@ -71,6 +71,7 @@ svc boot uc-pxx-switch
 svc boot tsx-setup
 svc boot tsx-hostname
 svc default uc-pxx-audio
+svc default uc-pxx-audio-hold
 svc default uc-pxx-als
 svc default uc-pxx-presence
 svc sysinit uc-pxx-loader-key

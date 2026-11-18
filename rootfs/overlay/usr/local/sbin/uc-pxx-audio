@@ -16,9 +16,12 @@
 # The mixer defaults are the state in which the stock firmware (Grandstream
 # GS_AVS) keeps the codec: the DACs go to the line, HP and HPCOM outputs. The
 # capture comes from LINE1L and LINE1R. The right DAC (channel 4 of the
-# playback PCM) feeds the hands-free amplifier and the handset amplifier. Both
-# amplifier enables are on by default. The device tree sets them. This script
-# does not switch them.
+# playback PCM) reaches the hands-free amplifier through RLOUT. The device
+# tree holds the hands-free amplifier on and the handset amplifier off. This
+# script does not switch them.
+# init also creates the alsa-lib softvol controls "Master" and "Media"
+# (/etc/asound.conf) and sets both to 100 %: the speaker level stays the codec
+# control "PCM Playback Volume".
 #
 # Without the card, init exits 0. The other commands exit 2.
 # TODO: mute, and a separate volume for the handset. Both share the DAC with the
@@ -26,6 +29,7 @@
 CONF=${TSX_AUDIO_CONF:-/etc/tsx/audio.conf}
 ASOUND=${TSX_ASOUND_DIR:-/proc/asound}
 AMIXER=${AMIXER:-amixer}
+APLAY=${APLAY:-aplay}
 
 . "${TSX_BOARD_CONF:-/usr/local/lib/tsx/board.sh}"
 CARD=$TSX_SOUND_CARD CARD_WAIT=${UC_PXX_CARD_WAIT:-15}
@@ -91,6 +95,14 @@ init_card() {
 	# mainline default is off, and the ADC offset (-28 dBFS on the handset
 	# microphone channel) would pass.
 	cset 'ADC HPF Cut-off' '0.0045xFs,0.0045xFs'
+	# The softvols exist only after a first open. These PCMs end in "null",
+	# so the hardware is not touched.
+	for _s in tsx_master_ctl tsx_media_ctl; do
+		$APLAY -q -D "$_s" -t raw -f S32_LE -r 48000 -c 2 /dev/null 2>/dev/null ||
+			log "could not create the softvol of $_s"
+	done
+	cset 'Master' '100%'
+	cset 'Media' '100%'
 	_p=$(get_percent)
 	if [ -n "$_p" ]; then
 		set_percent "$_p"

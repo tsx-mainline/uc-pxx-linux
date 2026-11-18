@@ -1,0 +1,22 @@
+#!/sbin/openrc-run
+# Keep one playback stream open on the sound card: silence into the dmix of
+# /etc/asound.conf. While it runs, the I2S clocks never stop and the AIC3104
+# line output that feeds the hands-free amplifier never powers down, so the
+# speaker does not pop when other sounds start and stop. The stock firmware
+# did the same (gs_avs kept its PCM open). docs/hardware.md, "Audio".
+# Without the card it does not start and does not fail the boot.
+description="Hold the speaker output open (no pops at stream start and stop)"
+supervisor=supervise-daemon
+command=/usr/bin/aplay
+command_args="-q -D tsx_hold -t raw -f S32_LE -r 48000 -c 4 /dev/zero"
+command_user="nobody:audio"
+respawn_delay=2
+respawn_max=0
+depend() { after uc-pxx-audio; before kiosk tsx-sendspin tsx-voice tsx-esphome; }
+start_pre() {
+	. "${TSX_BOARD_CONF:-/usr/local/lib/tsx/board.sh}"
+	[ -e "/proc/asound/${TSX_SOUND_CARD:-UCP10}" ] || {
+		ewarn "no sound card ${TSX_SOUND_CARD:-UCP10}, not holding the output"
+		return 1
+	}
+}

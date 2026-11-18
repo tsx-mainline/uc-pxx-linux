@@ -17,6 +17,11 @@ cat > "$T/amixer" <<'STUB'
 echo "$*" >> "$AMIXER_LOG"
 STUB
 chmod 755 "$T/amixer"
+cat > "$T/aplay" <<'STUB'
+#!/bin/sh
+echo "aplay $*" >> "$AMIXER_LOG"
+STUB
+chmod 755 "$T/aplay"
 cat > "$T/audio.conf" <<'CONF'
 SPEAKER_VOLUME=75
 VOLUME_MAX=100
@@ -24,7 +29,7 @@ VOLUME_MIN=40
 VOLUME_SENDSPIN=100
 MIC_VOLUME=30
 CONF
-ua() { env -i PATH="$PATH" AMIXER="$T/amixer" AMIXER_LOG="$T/log" TSX_BOARD_CONF="$HERE/overlay/usr/local/lib/tsx/board.sh" TSX_AUDIO_CONF="$T/audio.conf" TSX_ASOUND_DIR="$T/asound" \
+ua() { env -i PATH="$PATH" AMIXER="$T/amixer" APLAY="$T/aplay" AMIXER_LOG="$T/log" TSX_BOARD_CONF="$HERE/overlay/usr/local/lib/tsx/board.sh" TSX_AUDIO_CONF="$T/audio.conf" TSX_ASOUND_DIR="$T/asound" \
 	UC_PXX_STATE_DIR="$T/state" UC_PXX_CARD_WAIT=0 sh "$A" "$@"; }
 
 echo "== init =="
@@ -34,6 +39,10 @@ grep -q 'name=Right Line Mixer DACR1 Switch on' "$T/log" && ok "the right DAC go
 grep -q 'name=PCM Playback Volume 75,75' "$T/log" && ok "the first boot uses SPEAKER_VOLUME" || bad "no default speaker volume"
 grep -q 'name=ADC HPF Cut-off 0.0045xFs,0.0045xFs' "$T/log" && ok "the ADC high-pass filter is on" || bad "no ADC filter"
 grep -q -e '-c UCP10' "$T/log" && ok "the card is UCP10" || bad "wrong card"
+for p in tsx_master_ctl tsx_media_ctl; do
+	grep -q "aplay .*-D $p " "$T/log" && ok "init creates the softvol $p" || bad "init does not open $p"
+done
+grep -q 'name=Master 100%' "$T/log" && grep -q 'name=Media 100%' "$T/log" && ok "init sets Master and Media to 100 %" || bad "Master/Media not at 100 %"
 
 echo "== no card =="
 rm -rf "$T/asound/UCP10"; : > "$T/log"
@@ -65,5 +74,17 @@ grep -q 'PCM Playback Volume 100,100' "$T/log" && ok "init restores the saved vo
 ua volume 30 >/dev/null; : > "$T/log"; ua fixed
 grep -q 'PCM Playback Volume 100,100' "$T/log" && ok "fixed sets VOLUME_SENDSPIN" || bad "fixed: $(cat "$T/log")"
 eq "$(ua volume)" 30 "fixed does not change the saved volume"
+echo "== asound.conf =="
+AC=$HERE/overlay/etc/asound.conf
+for p in speaker media mic ucp10play tsx_hold tsx_master_ctl tsx_media_ctl; do
+	grep -q "^pcm\.$p " "$AC" && ok "asound.conf defines $p" || bad "asound.conf has no $p"
+done
+eq "$(grep -c '"hw:UCP10,0"' "$AC")" 2 "only the dmix and the dsnoop open hw:UCP10,0"
+# The softvol controls and the _ctl twins must match (same name, range, steps)
+for c in Master Media; do
+	eq "$(grep -A4 "control { name \"$c\"" "$AC" | grep -E 'min_dB|max_dB|resolution' | sort | uniq -c | awk '{ print $1 }' | sort -u | tr '\n' ' ')" "2 " "$c: tsx_*_ctl matches the softvol"
+done
+H=$HERE/overlay/etc/init.d/uc-pxx-audio-hold
+grep -q 'tsx_hold' "$H" && ok "uc-pxx-audio-hold plays into tsx_hold" || bad "uc-pxx-audio-hold does not use tsx_hold"
 echo "$N passed, $F failed"
 [ "$F" = 0 ]
